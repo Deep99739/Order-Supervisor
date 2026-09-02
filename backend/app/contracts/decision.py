@@ -1,0 +1,69 @@
+from typing import Annotated, Literal
+
+from pydantic import Field, StringConstraints, model_validator
+
+from app.contracts.common import (
+    Count,
+    Message,
+    PositiveInt,
+    Reference,
+    ShortText,
+    UTCDateTime,
+    WireModel,
+)
+from app.contracts.run import ContextStamp
+from app.domain.vocabulary import ACTION_BATCH, SUMMARY_CHARS, ActionName, KnownEvent
+
+
+class ActionProposal(WireModel):
+    action: ActionName
+    content: Message
+    issue_id: Reference | None = None
+    rationale: ShortText
+
+
+class MemoryRefresh(WireModel):
+    text: Annotated[str, StringConstraints(min_length=1, max_length=SUMMARY_CHARS)]
+    through_sequence: Count
+
+
+class WakeHint(WireModel):
+    kind: Literal["watch_for_progress", "shorten_review", "await_response"]
+    issue_id: Reference
+    expires_at: UTCDateTime
+    event_type: KnownEvent | None = None
+    review_after_seconds: Annotated[int, Field(strict=True, ge=10, le=3600)] | None = None
+
+    @model_validator(mode="after")
+    def supported_hint(self):
+        if self.kind == "watch_for_progress" and self.event_type is None:
+            raise ValueError("watch_for_progress requires a known event type")
+        if self.kind == "shorten_review" and self.review_after_seconds is None:
+            raise ValueError("shorten_review requires a bounded interval")
+        return self
+
+
+class WakeGuidance(WireModel):
+    version: PositiveInt
+    context: ContextStamp
+    hints: Annotated[list[WakeHint], Field(max_length=5)]
+
+
+class DecisionProposal(WireModel):
+    rationale: Message
+    actions: Annotated[list[ActionProposal], Field(max_length=ACTION_BATCH)] = Field(
+        default_factory=list
+    )
+    sleep_for_seconds: Annotated[int, Field(strict=True, ge=10, le=3600)] | None = None
+    sleep_until: UTCDateTime | None = None
+    memory_refresh: MemoryRefresh | None = None
+    wake_guidance: WakeGuidance | None = None
+    completion_recommendation: ShortText | None = None
+
+    @model_validator(mode="after")
+    def bounded_proposal(self):
+        if self.sleep_for_seconds is not None and self.sleep_until is not None:
+            raise ValueError("propose a duration OR a timestamp, not both")
+        if sum(action.action == ActionName.MESSAGE_CUSTOMER for action in self.actions) > 1:
+            raise ValueError("only one customer-message draft per decision")
+        return self

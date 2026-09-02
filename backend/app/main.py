@@ -11,6 +11,7 @@ from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
 
 from app.config import Settings, load_settings
 from app.connections import process_connections
+from app.contracts.openapi import install_contract_schemas
 
 
 class HealthResponse(BaseModel):
@@ -98,4 +99,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return JSONResponse(result.model_dump(mode="json"), status_code=200 if ready else 503)
 
+    install_contract_schemas(api)
     return api

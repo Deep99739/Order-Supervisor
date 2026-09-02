@@ -1,0 +1,85 @@
+{
+  "run_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8",
+  "order_id": "EXAMPLE-1042",
+  "workflow_id": "order-supervisor/e57362a1-1ea0-42a6-b6da-b365d59651c8",
+  "temporal_run_id": null,
+  "supervisor": {
+    "id": "88206f55-62c2-4697-927d-94f3f77409e9",
+    "version": 1,
+    "name": "Standard order care",
+    "base_instructions": "Follow the order and record permitted simulated actions.",
+    "allowed_actions": [
+      "message_fulfillment_team",
+      "message_payments_team",
+      "message_logistics_team",
+      "message_customer",
+      "create_internal_note"
+    ],
+    "wake_profile": {
+      "mode": "standard",
+      "minimum_seconds": 30,
+      "default_seconds": 300,
+      "maximum_seconds": 3600
+    },
+    "maximum_age_seconds": 86400,
+    "customer_review_default": false,
+    "escalate_shipment_delays": false,
+    "prioritize_speed": false,
+    "model_label": null
+  },
+  "initial_context": {
+    "customer_display_name": "Example customer",
+    "description": "Synthetic contract fixture"
+  },
+  "status": "sleeping",
+  "pending_control": null,
+  "close_reason": null,
+  "facts": {
+    "payment": "unknown",
+    "payment_attempt_reference": null,
+    "payment_observed_at": null,
+    "shipment": "unknown",
+    "shipment_reference": null,
+    "shipment_observed_at": null,
+    "expected_at": null,
+    "delivered_at": null,
+    "delivery_evidence_reference": null,
+    "last_relevant_progress_at": null,
+    "open_issues": []
+  },
+  "recorded_revision": 4,
+  "context_version": 2,
+  "control_epoch": 0,
+  "last_sequence": 6,
+  "instructions": [],
+  "memory": {
+    "text": "",
+    "summary_version": 0,
+    "summary_through_sequence": 0,
+    "recorded_at": null
+  },
+  "recent_evidence": [],
+  "unresolved_evidence": [],
+  "deferred_evidence": [],
+  "last_decision_through_sequence": 0,
+  "next_wake_at": "2026-09-03T03:05:00Z",
+  "wake_reason": "Waiting for shipment progress",
+  "started_at": "2026-09-03T03:00:00Z",
+  "maximum_age_at": "2026-09-04T03:00:00Z",
+  "updated_at": "2026-09-03T03:00:02Z",
+  "closed_at": null,
+  "execution_generation": 0,
+  "pending_review": null,
+  "recovery": null,
+  "counters": {
+    "unique_events": 0,
+    "duplicate_events": 0,
+    "decisions": 0,
+    "model_attempts": 0,
+    "deferred_events": 0,
+    "committed_actions": 0,
+    "compactions": 0,
+    "continuations": 0
+  },
+  "final_output": null
+}
