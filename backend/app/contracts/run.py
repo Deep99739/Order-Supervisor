@@ -202,26 +202,68 @@ class RunSnapshot(WireModel):
         return self
 
 
+ActivityKind = Literal[
+    "run_reserved",
+    "event",
+    "policy",
+    "decision",
+    "action",
+    "instruction",
+    "control",
+    "review",
+    "sleep",
+    "memory",
+    "continuation",
+    "recovery",
+    "finalization",
+    "operation_receipt",
+]
+
+ActivityDisposition = Literal[
+    "applied",
+    "duplicate",
+    "conflict",
+    "rejected",
+    "too_late",
+    "capacity_exceeded",
+    "deferred",
+    "wake_now",
+    "review_required",
+    "proposed",
+    "blocked",
+    "pending_review",
+    "committed",
+    "failed",
+    "recorded",
+]
+
+# Receipts prove an operation finished; they are not part of the human timeline.
+INTERNAL_KINDS: frozenset[str] = frozenset({"operation_receipt"})
+
+# History filters the run view offers. "all" is every kind except the internal receipts.
+ACTIVITY_CATEGORIES: dict[str, frozenset[str]] = {
+    "events": frozenset({"event", "policy"}),
+    "actions": frozenset({"decision", "action", "review"}),
+    "system": frozenset(
+        {
+            "run_reserved",
+            "instruction",
+            "control",
+            "sleep",
+            "memory",
+            "continuation",
+            "recovery",
+            "finalization",
+        }
+    ),
+}
+
+
 class ActivityRecord(WireModel):
     id: UUID
     run_id: UUID
     sequence: PositiveInt
-    kind: Literal[
-        "run_reserved",
-        "event",
-        "policy",
-        "decision",
-        "action",
-        "instruction",
-        "control",
-        "review",
-        "sleep",
-        "memory",
-        "continuation",
-        "recovery",
-        "finalization",
-        "operation_receipt",
-    ]
+    kind: ActivityKind
     occurred_at: UTCDateTime | None = None
     recorded_at: UTCDateTime
     command_id: UUID | None = None
@@ -229,22 +271,6 @@ class ActivityRecord(WireModel):
     operation_id: Reference | None = None
     decision_id: Reference | None = None
     action_id: Reference | None = None
-    disposition: Literal[
-        "applied",
-        "duplicate",
-        "conflict",
-        "rejected",
-        "too_late",
-        "capacity_exceeded",
-        "deferred",
-        "wake_now",
-        "review_required",
-        "proposed",
-        "blocked",
-        "pending_review",
-        "committed",
-        "failed",
-        "recorded",
-    ]
+    disposition: ActivityDisposition
     explanation: ShortText
     details: ActivityDetails = Field(default_factory=dict)

@@ -6,6 +6,7 @@ from datetime import timedelta
 from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
 from temporalio.worker import Worker
 
+from app.activities.persistence import PersistenceActivities
 from app.activities.probe import ProbeActivities
 from app.config import load_settings
 from app.connections import process_connections
@@ -29,12 +30,15 @@ async def run_worker() -> None:
             client,
             task_queue=settings.temporal_task_queue,
             workflows=[FoundationProbe],
-            activities=[ProbeActivities(pool).probe_database],
+            activities=[
+                ProbeActivities(pool).probe_database,
+                PersistenceActivities(pool).commit_transition,
+            ],
             max_concurrent_activities=4,
             graceful_shutdown_timeout=timedelta(seconds=5),
         ):
             logging.info(
-                "Worker started; namespace=%s queue=%s; diagnostic registration only",
+                "Worker started; namespace=%s queue=%s; persistence and diagnostics only",
                 settings.temporal_namespace,
                 settings.temporal_task_queue,
             )
