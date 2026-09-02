@@ -71,11 +71,34 @@ class Decisions:
 
 
 @dataclass
+class Persistence:
+    """The real write boundary, with a seam to hold one transaction open."""
+
+    inner: PersistenceActivities
+    gate: asyncio.Event | None = None
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+
+    @activity.defn(name="commit_transition")
+    async def commit_transition(self, request: dict[str, Any]) -> dict[str, Any]:
+        if self.gate is not None:
+            waiting, self.gate = self.gate, None
+            self.started.set()
+            await waiting.wait()
+        return await self.inner.commit_transition(request)
+
+    def hold(self) -> asyncio.Event:
+        self.gate = asyncio.Event()
+        self.started.clear()
+        return self.gate
+
+
+@dataclass
 class Supervised:
     env: WorkflowEnvironment
     client: Client
     pool: asyncpg.Pool
     decisions: Decisions
+    persistence: Persistence
     handle: WorkflowHandle
     run_id: UUID
 
@@ -175,6 +198,7 @@ async def supervised(
         initial_context=context or {"description": "Workflow fixture order"},
     )
     decisions = Decisions()
+    persistence = Persistence(PersistenceActivities(pool))
     env = await WorkflowEnvironment.start_time_skipping()
     try:
         queue = f"wf-{uuid4().hex[:8]}"
@@ -182,7 +206,7 @@ async def supervised(
             env.client,
             task_queue=queue,
             workflows=[OrderSupervisor],
-            activities=[PersistenceActivities(pool).commit_transition, decisions.decide],
+            activities=[persistence.commit_transition, decisions.decide],
         ):
             handle = await env.client.start_workflow(
                 WORKFLOW_TYPE,
@@ -198,6 +222,7 @@ async def supervised(
                 client=env.client,
                 pool=pool,
                 decisions=decisions,
+                persistence=persistence,
                 handle=handle,
                 run_id=reservation.snapshot.run_id,
             )

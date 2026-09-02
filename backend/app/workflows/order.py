@@ -614,6 +614,9 @@ class OrderSupervisor:
                 start_to_close_timeout=DECIDE_TIMEOUT,
                 # The episode owns the retry budget, so the SDK does not multiply it.
                 retry_policy=RetryPolicy(maximum_attempts=1),
+                # Reading has no side effect to unwind, so an obsolete review is simply
+                # let go of rather than chased. Cancellation stays best effort.
+                cancellation_type=workflow.ActivityCancellationType.ABANDON,
             )
             completed = await self._await_decision(handle)
             if not completed:
@@ -640,8 +643,12 @@ class OrderSupervisor:
                 task.cancel()
         if handle in done:
             return True
-        # The model has no side effects, so an obsolete result can simply be dropped.
+        # Detach from the abandoned review; whatever it eventually returns is ignored.
         handle.cancel()
+        try:
+            await handle
+        except BaseException:  # noqa: BLE001 - an abandoned result carries no authority
+            pass
         return False
 
     async def _record_decision(
