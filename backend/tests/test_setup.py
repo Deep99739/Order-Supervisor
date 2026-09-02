@@ -28,7 +28,10 @@ async def test_health_is_independent_and_readiness_is_honest():
             assert response.json()["model"] == "missing_configuration"
             assert "test:test" not in response.text
             schema = (await client.get("/openapi.json")).json()
-            assert set(schema["paths"]) == {"/healthz", "/readyz"}
+            paths = set(schema["paths"])
+            assert {"/healthz", "/readyz", "/api/runs", "/api/runs/{run_id}"} <= paths
+            # Later work must not be advertised before it exists.
+            assert "/api/runs/{run_id}/analytics" not in paths
             assert {"RunSnapshot", "EventCommand", "DecisionProposal"} <= schema["components"][
                 "schemas"
             ].keys()

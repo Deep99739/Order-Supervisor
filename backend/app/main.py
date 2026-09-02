@@ -1,7 +1,8 @@
 import asyncio
-from contextlib import asynccontextmanager
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,9 +10,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
 
+from app.api.errors import install_error_handlers
+from app.api.runs import router as runs_router
 from app.config import Settings, load_settings
 from app.connections import process_connections
 from app.contracts.openapi import install_contract_schemas
+from app.storage.migrations import prepare_database
 
 
 class HealthResponse(BaseModel):
@@ -30,18 +34,24 @@ class ReadinessResponse(BaseModel):
     demo_mode: bool
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    connections: Callable[[], AbstractAsyncContextManager[Any]] | None = None,
+) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.settings = config
-        async with process_connections(config) as (pool, client):
+        async with opener() as (pool, client):
             app.state.pool = pool
             app.state.temporal = client
+            await prepare_database(pool)
             yield
 
     api = FastAPI(title="Order Supervisor", version="0.1.0", lifespan=lifespan)
     # Resolve settings once for CORS without requiring a DB or Temporal connection.
     config = settings or load_settings()
+    opener = connections or (lambda: process_connections(config))
     api.add_middleware(
         CORSMiddleware,
         allow_origins=[config.allowed_ui_origin],
@@ -99,5 +109,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return JSONResponse(result.model_dump(mode="json"), status_code=200 if ready else 503)
 
+    api.include_router(runs_router)
+    install_error_handlers(api)
     install_contract_schemas(api)
     return api

@@ -58,13 +58,16 @@ async def apply_migrations(pool: asyncpg.Pool) -> list[int]:
     return applied
 
 
-async def apply_migrations_if_possible(pool: asyncpg.Pool) -> None:
-    """Startup convenience. An unavailable database stays a readiness problem."""
+async def prepare_database(pool: asyncpg.Pool) -> None:
+    """Startup convenience. An unavailable database stays a readiness problem, not a crash."""
+    from app.storage.supervisors import seed_presets
+
     try:
         applied = await apply_migrations(pool)
+        await seed_presets(pool)
     except Exception:
         logging.warning(
-            "Could not apply migrations at startup; check PostgreSQL and run python -m app.migrate."
+            "Database setup is incomplete; check PostgreSQL and run python -m app.migrate."
         )
         return
     if applied:

@@ -43,7 +43,10 @@ def install_contract_schemas(api: FastAPI) -> None:
                 [(model, "validation") for model in PUBLIC_MODELS],
                 ref_template="#/components/schemas/{model}",
             )
-            schema.setdefault("components", {}).setdefault("schemas", {}).update(shared["$defs"])
+            schemas = schema.setdefault("components", {}).setdefault("schemas", {})
+            # Routed models already published by FastAPI win; this only fills the gaps.
+            for name, definition in shared["$defs"].items():
+                schemas.setdefault(name, definition)
             schema["x-order-supervisor-contract-version"] = 1
             api.openapi_schema = schema
         return api.openapi_schema

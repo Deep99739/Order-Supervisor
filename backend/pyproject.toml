@@ -24,6 +24,7 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+markers = ["integration: exercises the local Temporal service"]
 
 [tool.ruff]
 target-version = "py312"

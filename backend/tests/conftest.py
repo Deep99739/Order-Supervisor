@@ -1,9 +1,14 @@
 """Shared fixtures. Database tests use one real Postgres schema per test and drop it."""
 
+from contextlib import asynccontextmanager
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
+import httpx
 import pytest
+from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.service import RPCError, RPCStatusCode
 
 from app.config import Settings, load_settings
 from app.contracts.persistence import ProposedEntry, TransitionRequest
@@ -11,12 +16,68 @@ from app.contracts.run import RunSnapshot
 from app.domain.digest import canonical_digest
 from app.domain.presets import PRESETS
 from app.domain.vocabulary import operation_id
+from app.main import create_app
 from app.storage.migrations import apply_migrations
 from app.storage.pool import create_pool
 from app.storage.runs import Reservation, reserve_run
 from app.storage.supervisors import seed_presets
 
 UNAVAILABLE = "PostgreSQL is not available; start it with docker-compose up -d --wait"
+
+
+class FakeHandle:
+    def __init__(self, client: "FakeTemporal", workflow_id: str):
+        self.client = client
+        self.workflow_id = workflow_id
+
+    async def signal(self, name: str, payload: Any, **_: Any) -> None:
+        if self.client.signal_outcome == "missing":
+            raise RPCError("workflow not found", RPCStatusCode.NOT_FOUND, b"")
+        if self.client.signal_outcome == "unavailable":
+            raise RPCError("unavailable", RPCStatusCode.UNAVAILABLE, b"")
+        self.client.signals.append((self.workflow_id, name, payload))
+
+
+class FakeTemporal:
+    """A narrowly substituted client, only to control start and signal outcomes."""
+
+    def __init__(self, *, start_outcome: str = "ok", signal_outcome: str = "ok"):
+        self.start_outcome = start_outcome
+        self.signal_outcome = signal_outcome
+        self.starts: list[str] = []
+        self.signals: list[tuple[str, str, Any]] = []
+
+    async def start_workflow(self, workflow: str, arg: Any, *, id: str, **_: Any) -> object:
+        self.starts.append(id)
+        if self.start_outcome == "unavailable":
+            raise RPCError("unavailable", RPCStatusCode.UNAVAILABLE, b"")
+        if self.start_outcome == "lost_acknowledgement":
+            raise TimeoutError("no response")
+        # Like the real service under REJECT_DUPLICATE: this Workflow ID is taken.
+        if self.start_outcome == "already_started" or self.starts.count(id) > 1:
+            raise WorkflowAlreadyStartedError(id, workflow)
+        return object()
+
+    def get_workflow_handle(self, workflow_id: str) -> FakeHandle:
+        return FakeHandle(self, workflow_id)
+
+
+@pytest.fixture
+def temporal() -> FakeTemporal:
+    return FakeTemporal()
+
+
+@pytest.fixture
+async def api(settings: Settings, pool: asyncpg.Pool, temporal: FakeTemporal):
+    @asynccontextmanager
+    async def connections():
+        yield pool, temporal
+
+    app = create_app(settings, connections=connections)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
 
 
 @pytest.fixture(scope="session")

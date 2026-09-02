@@ -10,6 +10,7 @@ from app.activities.persistence import PersistenceActivities
 from app.activities.probe import ProbeActivities
 from app.config import load_settings
 from app.connections import process_connections
+from app.workflows.order import OrderSupervisor
 from app.workflows.probe import FoundationProbe
 
 
@@ -29,7 +30,7 @@ async def run_worker() -> None:
         async with Worker(
             client,
             task_queue=settings.temporal_task_queue,
-            workflows=[FoundationProbe],
+            workflows=[FoundationProbe, OrderSupervisor],
             activities=[
                 ProbeActivities(pool).probe_database,
                 PersistenceActivities(pool).commit_transition,
@@ -38,7 +39,7 @@ async def run_worker() -> None:
             graceful_shutdown_timeout=timedelta(seconds=5),
         ):
             logging.info(
-                "Worker started; namespace=%s queue=%s; persistence and diagnostics only",
+                "Worker started; namespace=%s queue=%s; supervisor lifecycle not implemented",
                 settings.temporal_namespace,
                 settings.temporal_task_queue,
             )

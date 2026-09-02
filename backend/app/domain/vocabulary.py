@@ -71,6 +71,15 @@ class KnownEvent(StrEnum):
     NO_UPDATE_FOR_N_HOURS = "no_update_for_n_hours"
 
 
+# Transport names shared by the API and the worker. The API starts and signals by name so
+# it never imports workflow code.
+WORKFLOW_TYPE = "OrderSupervisor"
+EVENT_SIGNAL = "event"
+INSTRUCTION_SIGNAL = "instruction"
+CONTROL_SIGNAL = "control"
+REVIEW_SIGNAL = "review"
+
+
 def workflow_id(run_id: UUID) -> str:
     return f"order-supervisor/{run_id}"
 
