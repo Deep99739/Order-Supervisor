@@ -1,6 +1,7 @@
 """Shared fixtures. Database tests use one real Postgres schema per test and drop it."""
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -12,7 +13,7 @@ from temporalio.service import RPCError, RPCStatusCode
 
 from app.config import Settings, load_settings
 from app.contracts.persistence import ProposedEntry, TransitionRequest
-from app.contracts.run import RunSnapshot
+from app.contracts.run import FinalOutput, RunSnapshot
 from app.domain.digest import canonical_digest
 from app.domain.presets import PRESETS
 from app.domain.vocabulary import operation_id
@@ -21,6 +22,7 @@ from app.storage.migrations import apply_migrations
 from app.storage.pool import create_pool
 from app.storage.runs import Reservation, reserve_run
 from app.storage.supervisors import seed_presets
+from app.storage.transition import commit_transition
 
 UNAVAILABLE = "PostgreSQL is not available; start it with docker-compose up -d --wait"
 
@@ -159,6 +161,41 @@ def transition(
         entries=entries,
         on_duplicate=on_duplicate or [],
     )
+
+
+async def close_run(pool: asyncpg.Pool, snapshot: RunSnapshot, *, counter: int = 1) -> RunSnapshot:
+    """Stand in for the worker finalizing a run, through the real write boundary."""
+    now = datetime.now(UTC)
+    final = FinalOutput(
+        close_reason="delivered",
+        closed_at=now,
+        facts=snapshot.facts,
+        summary="Delivery was recorded; supervision ended under the delivery rule.",
+        important_actions=[],
+        unresolved_issues=[],
+        learnings=[],
+        feedback=[],
+        narrative_provenance="factual_fallback",
+        evidence_through_sequence=snapshot.last_sequence,
+    )
+    candidate = RunSnapshot.model_validate(
+        snapshot.model_dump(mode="json")
+        | {
+            "status": "completed",
+            "close_reason": "delivered",
+            "closed_at": now.isoformat(),
+            "final_output": final.model_dump(mode="json"),
+        }
+    )
+    entry = ProposedEntry(
+        kind="finalization",
+        disposition="recorded",
+        explanation="Supervision ended on delivery evidence",
+    )
+    receipt = await commit_transition(
+        pool, transition(snapshot, counter=counter, entries=[entry], candidate=candidate)
+    )
+    return receipt.snapshot
 
 
 def with_facts(snapshot: RunSnapshot, **facts) -> RunSnapshot:

@@ -10,8 +10,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
 
+from app.api.commands import router as commands_router
 from app.api.errors import install_error_handlers
 from app.api.runs import router as runs_router
+from app.api.supervisors import router as supervisors_router
 from app.config import Settings, load_settings
 from app.connections import process_connections
 from app.contracts.openapi import install_contract_schemas
@@ -109,7 +111,9 @@ def create_app(
         )
         return JSONResponse(result.model_dump(mode="json"), status_code=200 if ready else 503)
 
+    api.include_router(supervisors_router)
     api.include_router(runs_router)
+    api.include_router(commands_router)
     install_error_handlers(api)
     install_contract_schemas(api)
     return api

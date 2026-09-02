@@ -5,7 +5,7 @@ the gap: a repeated request, a lost start acknowledgement, an unavailable Tempor
 second command naming an order that is already supervised.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from temporalio.client import Client
@@ -15,8 +15,9 @@ from temporalio.worker import Worker
 from app.activities.persistence import PersistenceActivities
 from app.domain.presets import PRESETS, STANDARD_ID
 from app.main import create_app
+from app.storage.runs import get_run
 from app.workflows.order import OrderSupervisor
-from tests.conftest import FakeTemporal
+from tests.conftest import FakeTemporal, close_run
 
 CONTEXT = {"customer_display_name": "Ada", "description": "One synthetic order"}
 
@@ -105,14 +106,9 @@ async def test_a_second_command_cannot_supervise_a_reserved_order(api):
 
 async def test_a_closed_order_is_not_restarted_by_a_later_request(api, pool):
     created = (await api.post("/api/runs", json=creation("ORD-CREATE-6"))).json()
-    # Stand in for the worker having finalized this run.
-    await pool.execute(
-        "UPDATE runs SET status = 'completed', close_reason = 'delivered',"
-        " closed_at = now(), final_output = '{}'::jsonb,"
-        " snapshot = jsonb_set(snapshot, '{status}', '\"completed\"')"
-        " WHERE id = $1",
-        created["run_id"],
-    )
+    snapshot = await get_run(pool, UUID(created["run_id"]))
+    assert snapshot is not None
+    await close_run(pool, snapshot)
 
     clash = await api.post("/api/runs", json=creation("ORD-CREATE-6"))
     assert clash.status_code == 409
