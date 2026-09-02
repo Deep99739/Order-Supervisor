@@ -1,7 +1,7 @@
 """Shared fixtures. Database tests use one real Postgres schema per test and drop it."""
 
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -12,11 +12,12 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
 from app.config import Settings, load_settings
+from app.contracts.commands import EventCommand
 from app.contracts.persistence import ProposedEntry, TransitionRequest
-from app.contracts.run import FinalOutput, RunSnapshot
+from app.contracts.run import EvidenceReference, FinalOutput, RunSnapshot
 from app.domain.digest import canonical_digest
 from app.domain.presets import PRESETS
-from app.domain.vocabulary import operation_id
+from app.domain.vocabulary import operation_id, workflow_id
 from app.main import create_app
 from app.storage.migrations import apply_migrations
 from app.storage.pool import create_pool
@@ -125,6 +126,44 @@ async def reserved(pool: asyncpg.Pool) -> Reservation:
         config=PRESETS[0],
         initial_context=context,
     )
+
+
+RULES_RUN = UUID("7c9f0f2e-51a3-4f0e-9c2a-2b6d5a4e1c30")
+RULES_NOW = datetime(2026, 9, 3, 3, 0, tzinfo=UTC)
+
+
+def sample_snapshot(**overrides) -> RunSnapshot:
+    """A confirmed snapshot for pure rule tests; no database involved."""
+    values = {
+        "run_id": RULES_RUN,
+        "order_id": "ORD-RULES-1",
+        "workflow_id": workflow_id(RULES_RUN),
+        "supervisor": PRESETS[0],
+        "initial_context": {"description": "Rule fixture order"},
+        "status": "sleeping",
+        "next_wake_at": RULES_NOW + timedelta(minutes=5),
+        "started_at": RULES_NOW,
+        "maximum_age_at": RULES_NOW + timedelta(days=1),
+        "updated_at": RULES_NOW,
+        "recorded_revision": 1,
+        "last_sequence": 1,
+    } | overrides
+    return RunSnapshot.model_validate(values)
+
+
+def sample_event(event_type: str, payload: dict | None = None, **overrides) -> EventCommand:
+    values = {
+        "command_id": uuid4(),
+        "event_id": f"src-{uuid4().hex[:8]}",
+        "event_type": event_type,
+        "occurred_at": RULES_NOW,
+        "payload": payload or {},
+    } | overrides
+    return EventCommand.model_validate(values)
+
+
+def sample_evidence(sequence: int = 2) -> EvidenceReference:
+    return EvidenceReference(sequence=sequence, activity_id=uuid4())
 
 
 def event_entry(event_id: str, payload: dict, *, disposition: str = "applied") -> ProposedEntry:
