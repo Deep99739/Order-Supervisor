@@ -416,6 +416,21 @@ export interface RunView {
 
 export type ActivityCategory = "all" | "events" | "actions" | "system";
 
+// Read from an activity record's `details`. The three ordinary triggers are the ones the
+// assignment names; a control reassessment is deliberately not one of them.
+export type DecisionTrigger =
+  | "start"
+  | "important_event"
+  | "scheduled_wake"
+  | "control_reassessment";
+
+// The wake policy's verdict, which is also the disposition its record carries.
+// "deferred" means recorded without inference now — never discarded.
+export type PolicyOutcome = "wake_now" | "deferred" | "review_required";
+
+// A scripted stand-in decision must never be shown as a model decision.
+export type DecisionProvenance = "scripted" | "model";
+
 // Records ascend by sequence. `through_sequence` is the bound that was applied, so a
 // newer receipt is never merged into an older view of the order's facts.
 export interface ActivityPage {
