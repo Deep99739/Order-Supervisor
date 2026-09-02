@@ -200,7 +200,7 @@ def test_routine_events_defer_and_important_events_wake():
     snapshot = sample_snapshot()
     routine = interpret(snapshot, sample_event("payment_confirmed", {"payment_reference": "P1"}))
     deferred = policy.classify(routine, snapshot, "payment_confirmed")
-    assert deferred.outcome == "defer" and deferred.wake is False
+    assert deferred.outcome == "deferred" and deferred.wake is False
 
     important = interpret(snapshot, sample_event("refund_requested", {"reason": "Late"}))
     woken = policy.classify(important, snapshot, "refund_requested")

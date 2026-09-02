@@ -34,6 +34,9 @@ DUPLICATE_BATCH = 8
 class ProposedEntry(WireModel):
     """One audit entry. A `dedupe_key` marks this entry as canonical for that identity."""
 
+    # Supplied by the workflow (deterministically) when it needs to reference this entry as
+    # evidence in the same transition; the transaction assigns one otherwise.
+    entry_id: UUID | None = None
     kind: ActivityKind
     disposition: ActivityDisposition
     explanation: ShortText

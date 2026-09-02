@@ -15,7 +15,9 @@ from app.contracts.run import RunSnapshot
 from app.domain.events import EventOutcome
 from app.domain.vocabulary import KnownEvent
 
-PolicyOutcome = Literal["wake_now", "defer", "review_required"]
+# These are also the dispositions the policy record carries, so the classifier's verdict
+# and what the timeline shows can never drift apart.
+PolicyOutcome = Literal["wake_now", "deferred", "review_required"]
 
 
 @dataclass(frozen=True)
@@ -116,7 +118,7 @@ def classify(
         )
 
     return PolicyDecision(
-        "defer",
+        "deferred",
         wake=False,
         review_required=False,
         reason=f"{outcome.explanation} The next scheduled review still stands.",

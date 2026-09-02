@@ -198,7 +198,7 @@ async def commit_transition(pool: asyncpg.Pool, request: TransitionRequest) -> T
             for entry, entry_sequence in written:
                 await connection.execute(
                     INSERT_ENTRY,
-                    uuid4(),
+                    entry.entry_id or uuid4(),
                     request.run_id,
                     entry_sequence,
                     entry.kind,

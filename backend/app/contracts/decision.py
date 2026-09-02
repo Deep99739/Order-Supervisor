@@ -11,8 +11,14 @@ from app.contracts.common import (
     UTCDateTime,
     WireModel,
 )
-from app.contracts.run import ContextStamp
-from app.domain.vocabulary import ACTION_BATCH, SUMMARY_CHARS, ActionName, KnownEvent
+from app.contracts.run import ContextStamp, RunSnapshot
+from app.domain.vocabulary import (
+    ACTION_BATCH,
+    SUMMARY_CHARS,
+    ActionName,
+    DecisionTrigger,
+    KnownEvent,
+)
 
 
 class ActionProposal(WireModel):
@@ -49,6 +55,17 @@ class WakeGuidance(WireModel):
     hints: Annotated[list[WakeHint], Field(max_length=5)]
 
 
+class DecisionRequest(WireModel):
+    """One bounded decision episode. Provider retries stay attempts of this episode."""
+
+    decision_id: Reference
+    trigger: DecisionTrigger
+    attempt: PositiveInt
+    context: ContextStamp
+    snapshot: RunSnapshot
+    trigger_detail: ShortText
+
+
 class DecisionProposal(WireModel):
     rationale: Message
     actions: Annotated[list[ActionProposal], Field(max_length=ACTION_BATCH)] = Field(
@@ -67,3 +84,11 @@ class DecisionProposal(WireModel):
         if sum(action.action == ActionName.MESSAGE_CUSTOMER for action in self.actions) > 1:
             raise ValueError("only one customer-message draft per decision")
         return self
+
+
+class DecisionResult(WireModel):
+    """The proposal plus where it came from. A scripted result is never a model result."""
+
+    proposal: DecisionProposal
+    provenance: Literal["scripted", "model"]
+    model_label: Reference | None = None

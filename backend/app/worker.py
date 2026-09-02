@@ -6,6 +6,7 @@ from datetime import timedelta
 from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
 from temporalio.worker import Worker
 
+from app.activities.decision import DecisionActivities
 from app.activities.persistence import PersistenceActivities
 from app.activities.probe import ProbeActivities
 from app.config import load_settings
@@ -34,14 +35,17 @@ async def run_worker() -> None:
             activities=[
                 ProbeActivities(pool).probe_database,
                 PersistenceActivities(pool).commit_transition,
+                DecisionActivities(settings).decide,
             ],
             max_concurrent_activities=4,
             graceful_shutdown_timeout=timedelta(seconds=5),
         ):
             logging.info(
-                "Worker started; namespace=%s queue=%s; supervisor lifecycle not implemented",
+                "Worker started; namespace=%s queue=%s agent_mode=%s; business actions "
+                "are not implemented",
                 settings.temporal_namespace,
                 settings.temporal_task_queue,
+                settings.agent_mode,
             )
             await stop.wait()
 

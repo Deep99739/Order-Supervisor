@@ -59,6 +59,20 @@ class ControlKind(StrEnum):
     TERMINATE = "terminate"
 
 
+class DecisionTrigger(StrEnum):
+    START = "start"
+    IMPORTANT_EVENT = "important_event"
+    SCHEDULED_WAKE = "scheduled_wake"
+    # Resume, recovery, and new instructions ask for one reassessment. Analytics keep this
+    # separate from the three ordinary triggers the assignment names.
+    CONTROL_REASSESSMENT = "control_reassessment"
+
+
+ORDINARY_TRIGGERS = frozenset(
+    {DecisionTrigger.START, DecisionTrigger.IMPORTANT_EVENT, DecisionTrigger.SCHEDULED_WAKE}
+)
+
+
 class KnownEvent(StrEnum):
     ORDER_CREATED = "order_created"
     PAYMENT_CONFIRMED = "payment_confirmed"
