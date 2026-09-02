@@ -345,3 +345,83 @@ export interface ApiErrorBody {
   command_id?: UUID | null;
   run_id?: UUID | null;
 }
+
+// Supervisor configuration. Identity and version are assigned by the API; a run keeps
+// the frozen copy it snapshotted, so saving an edit never changes a run in progress.
+export interface SupervisorDraft {
+  name: string;
+  base_instructions: string;
+  allowed_actions: ActionName[];
+  wake_profile?: WakeProfile;
+  maximum_age_seconds?: number | null;
+  customer_review_default?: boolean;
+  escalate_shipment_delays?: boolean;
+  prioritize_speed?: boolean;
+  model_label?: string | null;
+}
+
+export interface SupervisorUpdate extends SupervisorDraft {
+  expected_version: number;
+}
+
+export interface SupervisorRecord {
+  config: SupervisorConfig;
+  is_preset: boolean;
+  created_at: UTCDateTime;
+  updated_at: UTCDateTime;
+}
+
+export interface SupervisorList {
+  supervisors: SupervisorRecord[];
+}
+
+// The reservation is settled either way; `retry_required` means the workflow start was
+// not confirmed and the same request should be sent again with the same command_id.
+export type StartState = "started" | "retry_required";
+
+export interface RunCreated {
+  command_id: UUID;
+  run_id: UUID;
+  order_id: string;
+  workflow_id: string;
+  status: RunStatus;
+  start: StartState;
+  start_detail: string | null;
+}
+
+export interface RunListItem {
+  run_id: UUID;
+  order_id: string;
+  supervisor_name: string;
+  initial_context: JsonObject;
+  status: RunStatus;
+  pending_control: ControlKind | null;
+  close_reason: CloseReason | null;
+  facts: OrderFacts;
+  next_wake_at: UTCDateTime | null;
+  updated_at: UTCDateTime;
+  closed_at: UTCDateTime | null;
+}
+
+export interface RunPage {
+  runs: RunListItem[];
+  next_cursor: string | null;
+  observed_at: UTCDateTime;
+}
+
+export interface RunView {
+  snapshot: RunSnapshot;
+  observed_at: UTCDateTime;
+}
+
+export type ActivityCategory = "all" | "events" | "actions" | "system";
+
+// Records ascend by sequence. `through_sequence` is the bound that was applied, so a
+// newer receipt is never merged into an older view of the order's facts.
+export interface ActivityPage {
+  records: ActivityRecord[];
+  earlier_cursor: number | null;
+  through_sequence: number;
+  last_sequence: number;
+  observed_at: UTCDateTime;
+}
