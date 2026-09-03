@@ -17,8 +17,24 @@
   --destructive: #b42318;
   --border: #e2e8f0;
   --input: #cbd5e1;
-  --ring: #0f766e;
+  /* Deliberately not the accent: a focus ring must stay legible on top of a selected
+     row, which is already tinted with the accent. */
+  --ring: #1d4ed8;
   --radius: 0.625rem;
+
+  /* Supervisor and order state. Each tone is used with a label, never alone. */
+  --tone-working: #1d4ed8;
+  --tone-working-surface: #eef3ff;
+  --tone-quiet: #0f766e;
+  --tone-quiet-surface: #e9f5f2;
+  --tone-hold: #92590b;
+  --tone-hold-surface: #fdf5e3;
+  --tone-done: #15803d;
+  --tone-done-surface: #e9f6ee;
+  --tone-stopped: #475569;
+  --tone-stopped-surface: #eef1f5;
+  --tone-alert: #b42318;
+  --tone-alert-surface: #fdf1f0;
 }
 
 @theme inline {
@@ -38,11 +54,28 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --color-working: var(--tone-working);
+  --color-working-surface: var(--tone-working-surface);
+  --color-quiet: var(--tone-quiet);
+  --color-quiet-surface: var(--tone-quiet-surface);
+  --color-hold: var(--tone-hold);
+  --color-hold-surface: var(--tone-hold-surface);
+  --color-done: var(--tone-done);
+  --color-done-surface: var(--tone-done-surface);
+  --color-stopped: var(--tone-stopped);
+  --color-stopped-surface: var(--tone-stopped-surface);
+  --color-alert: var(--tone-alert);
+  --color-alert-surface: var(--tone-alert-surface);
+
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   --radius-sm: calc(var(--radius) * 0.75);
   --radius-md: calc(var(--radius) * 0.875);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) * 1.2);
+  --shadow-panel: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 3px rgb(15 23 42 / 0.06);
+  --shadow-overlay: 0 12px 40px -12px rgb(15 23 42 / 0.28);
 }
 
 @layer base {
@@ -58,11 +91,97 @@
   }
   a,
   button,
-  summary {
-    @apply outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background;
+  summary,
+  [role="tab"] {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+  /* Counts, sequences, and countdowns must not shift width as they update. */
+  time,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
   }
   ::selection {
     background: #c8e6e1;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border bg-card shadow-panel;
+  }
+  /* One shared field appearance, so a native input and a Radix trigger match. */
+  .field {
+    @apply h-10 w-full rounded-lg border border-input bg-card px-3 text-sm text-foreground
+      transition-colors duration-150 placeholder:text-muted-foreground/80
+      focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2
+      focus-visible:ring-offset-background focus-visible:outline-none
+      disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground
+      aria-invalid:border-destructive;
+  }
+}
+
+/* Overlay motion only. A transition here explains where a panel came from; nothing in
+   this console animates on a poll. */
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes overlay-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -46%) scale(0.97);
+  }
+}
+@keyframes dialog-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.98);
+  }
+}
+@keyframes sheet-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes sheet-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@layer components {
+  [data-slot="overlay"][data-state="open"] {
+    animation: overlay-in 180ms ease-out;
+  }
+  [data-slot="overlay"][data-state="closed"] {
+    animation: overlay-out 160ms ease-in;
+  }
+  [data-slot="dialog-content"][data-state="open"] {
+    animation: dialog-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  [data-slot="dialog-content"][data-state="closed"] {
+    animation: dialog-out 160ms ease-in;
+  }
+  [data-slot="sheet-content"][data-state="open"] {
+    animation: sheet-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  [data-slot="sheet-content"][data-state="closed"] {
+    animation: sheet-out 180ms ease-in;
+  }
+  [data-slot="popper"][data-state="open"] {
+    animation: menu-in 140ms ease-out;
   }
 }
 
