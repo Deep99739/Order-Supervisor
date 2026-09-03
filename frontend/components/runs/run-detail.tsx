@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StateBadge } from "@/components/state-badge";
 import { ErrorState, StaleNotice } from "@/components/states";
 import { ActivityFeed } from "@/components/runs/activity-feed";
+import { AnalyticsTab } from "@/components/runs/analytics-tab";
 import { DraftReviewCard } from "@/components/runs/draft-review";
 import { EventSheet } from "@/components/runs/event-sheet";
 import { InstructionControls } from "@/components/runs/instruction-controls";
@@ -25,6 +26,7 @@ import {
 import { useRun } from "@/lib/use-run";
 import { useServerNow } from "@/lib/clock";
 import {
+  durationLabel,
   isClosed,
   progressSummary,
   progressTone,
@@ -169,6 +171,18 @@ export function RunDetail({ runId }: { runId: string }) {
               tone={progressTone(snapshot.facts)}
             />
             <StateBadge label={state.label} tone={state.tone} />
+            {/* Demo timing changes how long this run waits and nothing else. Saying so
+                where the state is read stops a short interval looking like a claim about
+                how the system normally behaves. */}
+            {snapshot.supervisor.wake_profile.mode === "demo" ? (
+              <StateBadge
+                label={`Demo timing · reviews ~${durationLabel(
+                  snapshot.supervisor.wake_profile.default_seconds,
+                )}, ends after ${durationLabel(snapshot.supervisor.maximum_age_seconds)}`}
+                tone="working"
+                dot={false}
+              />
+            ) : null}
             <span className="text-[13px] text-muted-foreground">
               {state.hint}
             </span>
@@ -196,7 +210,10 @@ export function RunDetail({ runId }: { runId: string }) {
               <TabsTrigger value="memory" className="mr-4">
                 Memory
               </TabsTrigger>
-              <TabsTrigger value="outcome">Outcome</TabsTrigger>
+              <TabsTrigger value="outcome" className="mr-4">
+                Outcome
+              </TabsTrigger>
+              <TabsTrigger value="analytics">Analytics</TabsTrigger>
             </TabsList>
             <TabsContent value="activity">
               <ActivityFeed
@@ -212,6 +229,9 @@ export function RunDetail({ runId }: { runId: string }) {
             </TabsContent>
             <TabsContent value="outcome">
               <OutcomeTab snapshot={snapshot} />
+            </TabsContent>
+            <TabsContent value="analytics">
+              <AnalyticsTab snapshot={snapshot} />
             </TabsContent>
           </Tabs>
         </main>

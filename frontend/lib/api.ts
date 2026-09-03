@@ -9,6 +9,7 @@ import type {
   EventCommand,
   InstructionCommand,
   ReviewCommand,
+  RunAnalytics,
   RunCreated,
   RunPage,
   RunView,
@@ -254,6 +255,21 @@ export function listRuns(
 
 export function getRun(runId: string, signal?: AbortSignal): Promise<RunView> {
   return request<RunView>(`/api/runs/${runId}`, { signal, expect: "snapshot" });
+}
+
+/**
+ * Counts derived from the run's canonical records. This is a separate observation from
+ * the snapshot — it carries its own `observed_at` and `through_sequence`, and the panel
+ * says so rather than presenting the two as one moment.
+ */
+export function getAnalytics(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<RunAnalytics> {
+  return request<RunAnalytics>(`/api/runs/${runId}/analytics`, {
+    signal,
+    expect: "through_sequence",
+  });
 }
 
 export function getActivity(

@@ -485,6 +485,74 @@ export interface RunView {
   observed_at: UTCDateTime;
 }
 
+// Analytics. Every unit is defined in backend/app/contracts/analytics.py; this mirror
+// carries the shape, not a second interpretation of what the numbers mean.
+export interface TriggerBreakdown {
+  start: number;
+  important_event: number;
+  scheduled_wake: number;
+  control_reassessment: number;
+}
+
+export interface ActionOutcomes {
+  committed: number;
+  blocked: number;
+  pending_review: number;
+}
+
+export interface TokenUsage {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  calls: number;
+  reported_calls: number;
+}
+
+// One cached counter against the same quantity derived from canonical records.
+export interface CounterCheck {
+  metric: string;
+  recorded: number;
+  derived: number;
+  agrees: boolean;
+}
+
+export interface RunAnalytics {
+  run_id: UUID;
+  order_id: string;
+  observed_at: UTCDateTime;
+  through_sequence: number;
+  recorded_revision: number;
+  status: RunStatus;
+  close_reason: CloseReason | null;
+  started_at: UTCDateTime;
+  closed_at: UTCDateTime | null;
+  duration_seconds: number;
+  unique_events: number;
+  duplicate_events: number;
+  deferred_events: number;
+  events_by_type: Record<string, number>;
+  decision_episodes: number;
+  completed_episodes: number;
+  discarded_episodes: number;
+  episodes_by_trigger: TriggerBreakdown;
+  provider_attempts: number;
+  report_attempts: number;
+  action_outcomes: ActionOutcomes;
+  committed_by_action: Record<string, number>;
+  blocked_by_reason: Record<string, number>;
+  review_flags: number;
+  review_outcomes: Record<string, number>;
+  open_issues: number;
+  escalated_issues: number;
+  compactions: number;
+  refused_compactions: number;
+  continuations: number;
+  prepared_continuations: number;
+  operational_failures: number;
+  failures_by_kind: Record<string, number>;
+  tokens: TokenUsage;
+  counter_checks: CounterCheck[];
+}
+
 export type ActivityCategory = "all" | "events" | "actions" | "system";
 
 // Read from an activity record's `details`. The three ordinary triggers are the ones the

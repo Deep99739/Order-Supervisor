@@ -6,7 +6,7 @@ import { Check, ClipboardCopy, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StateBadge } from "@/components/state-badge";
 import { Panel } from "@/components/runs/side-panels";
-import { ACTION_LABEL, CLOSE_REASON, isClosed } from "@/lib/display";
+import { ACTION_LABEL, BLOCK_REASON, CLOSE_REASON, isClosed } from "@/lib/display";
 import type { ActionName, FinalOutput, RunSnapshot } from "@/lib/contracts";
 
 function asText(snapshot: RunSnapshot, report: FinalOutput): string {
@@ -22,6 +22,14 @@ function asText(snapshot: RunSnapshot, report: FinalOutput): string {
       ? report.important_actions.map(
           (action) =>
             `- ${ACTION_LABEL[action.action as ActionName] ?? action.action}: ${action.content}`,
+        )
+      : ["- none"]),
+    "",
+    "Proposals that were refused (nothing was recorded for these)",
+    ...(report.blocked_actions.length > 0
+      ? report.blocked_actions.map(
+          (item) =>
+            `- ${ACTION_LABEL[item.action as ActionName] ?? item.action} — ${BLOCK_REASON[item.reason] ?? item.reason}: ${item.explanation}`,
         )
       : ["- none"]),
     "",
@@ -42,7 +50,7 @@ function asText(snapshot: RunSnapshot, report: FinalOutput): string {
       ? report.feedback.map((item) => `- ${item}`)
       : ["- none"]),
     "",
-    `Narrative: ${report.narrative_provenance === "model" ? "written by the agent" : "rendered from the record"}`,
+    `Narrative: ${report.narrative_provenance === "model_assisted" ? "written by the agent over recorded facts" : "rendered from the record"}`,
     report.narrative_limitation ?? "",
     `Evidence considered through record #${report.evidence_through_sequence}`,
   ];
@@ -141,8 +149,8 @@ export function OutcomeTab({ snapshot }: { snapshot: RunSnapshot }) {
         </div>
         <p className="mt-4 leading-6 whitespace-pre-wrap">{report.summary}</p>
         <p className="mt-4 border-t pt-3 text-[13px] leading-5 text-muted-foreground">
-          {report.narrative_provenance === "model"
-            ? "The narrative was written by the agent from the recorded facts."
+          {report.narrative_provenance === "model_assisted"
+            ? "The agent wrote the closing text from the recorded facts. The facts, receipts, and unresolved list are not its to change."
             : "The narrative was rendered from the record rather than written by the agent."}{" "}
           {report.narrative_limitation ?? ""} Evidence considered through record #
           {report.evidence_through_sequence}.
@@ -174,6 +182,40 @@ export function OutcomeTab({ snapshot }: { snapshot: RunSnapshot }) {
                 </div>
                 <p className="mt-1 leading-6 text-muted-foreground">
                   {action.content}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      {/* Kept apart from work that happened. A refusal is a decision with a reason, not
+          a failure to mention. */}
+      <Panel title="Proposals that were refused">
+        {report.blocked_actions.length === 0 ? (
+          <p className="text-muted-foreground">
+            Every proposal this run made was carried out.
+          </p>
+        ) : (
+          <ul className="space-y-3.5">
+            {report.blocked_actions.map((item) => (
+              <li key={`${item.sequence}-${item.action}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">
+                    {ACTION_LABEL[item.action as ActionName] ?? item.action}
+                  </span>
+                  <StateBadge
+                    label={BLOCK_REASON[item.reason] ?? item.reason}
+                    tone="hold"
+                    dot={false}
+                    className="px-2 py-0.5 text-[12px]"
+                  />
+                  <span className="text-[13px] text-muted-foreground tabular-nums">
+                    entry #{item.sequence}
+                  </span>
+                </div>
+                <p className="mt-1 leading-6 text-muted-foreground">
+                  {item.explanation} Nothing was recorded for it.
                 </p>
               </li>
             ))}
