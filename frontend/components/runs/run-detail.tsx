@@ -9,8 +9,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StateBadge } from "@/components/state-badge";
 import { ErrorState, StaleNotice } from "@/components/states";
 import { ActivityFeed } from "@/components/runs/activity-feed";
+import { DraftReviewCard } from "@/components/runs/draft-review";
+import { EventSheet } from "@/components/runs/event-sheet";
+import { InstructionControls } from "@/components/runs/instruction-controls";
+import { InstructionDialog } from "@/components/runs/instruction-dialog";
 import { MemoryTab } from "@/components/runs/memory-tab";
 import { OutcomeTab } from "@/components/runs/outcome-tab";
+import { RunControls } from "@/components/runs/run-controls";
 import {
   FactsCard,
   InstructionListCard,
@@ -20,6 +25,7 @@ import {
 import { useRun } from "@/lib/use-run";
 import { useServerNow } from "@/lib/clock";
 import {
+  isClosed,
   progressSummary,
   progressTone,
   relativeTime,
@@ -63,6 +69,24 @@ export function RunDetail({ runId }: { runId: string }) {
 
   const snapshot = view.snapshot;
   const state = supervisorState(snapshot);
+  const closed = isClosed(snapshot.status);
+  // A closed run records nothing further. Events and instructions stay visible but
+  // disabled, with the reason on the control itself.
+  const closedReason = closed
+    ? "Supervision has closed for this order; it accepts no further commands."
+    : "";
+
+  const urgent = (
+    <>
+      <RecoveryCard snapshot={snapshot} />
+      <DraftReviewCard
+        runId={runId}
+        snapshot={snapshot}
+        onSubmitted={feed.refresh}
+      />
+      <NextReviewCard snapshot={snapshot} now={now} />
+    </>
+  );
 
   return (
     <div className="space-y-5">
@@ -101,15 +125,36 @@ export function RunDetail({ runId }: { runId: string }) {
                 </time>
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={feed.refresh}
-              disabled={feed.refreshing}
-            >
-              <RefreshCw className="size-4" aria-hidden="true" />
-              Refresh
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <EventSheet
+                runId={runId}
+                records={feed.records}
+                disabled={closed}
+                disabledReason={closedReason}
+                onSubmitted={feed.refresh}
+              />
+              <InstructionDialog
+                runId={runId}
+                snapshot={snapshot}
+                disabled={closed}
+                disabledReason={closedReason}
+                onSubmitted={feed.refresh}
+              />
+              <RunControls
+                runId={runId}
+                snapshot={snapshot}
+                onSubmitted={feed.refresh}
+              />
+              <Button
+                variant="outline"
+                size="icon-lg"
+                onClick={feed.refresh}
+                disabled={feed.refreshing}
+                aria-label="Refresh this run"
+              >
+                <RefreshCw className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-4">
@@ -132,10 +177,9 @@ export function RunDetail({ runId }: { runId: string }) {
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-        <div className="space-y-5 lg:hidden">
-          <RecoveryCard snapshot={snapshot} />
-          <NextReviewCard snapshot={snapshot} now={now} />
-        </div>
+        {/* On a narrow screen the state that needs a person comes before the timeline
+            rather than below it. */}
+        <div className="space-y-5 lg:hidden">{urgent}</div>
 
         <main className="panel min-w-0 px-4 py-4 sm:px-5">
           <Tabs defaultValue="activity">
@@ -167,12 +211,24 @@ export function RunDetail({ runId }: { runId: string }) {
         </main>
 
         <aside className="space-y-5 lg:sticky lg:top-5 lg:max-h-[calc(100dvh-2.5rem)] lg:overflow-y-auto lg:pb-1">
-          <div className="hidden space-y-5 lg:block">
-            <RecoveryCard snapshot={snapshot} />
-            <NextReviewCard snapshot={snapshot} now={now} />
-          </div>
+          <div className="hidden space-y-5 lg:block">{urgent}</div>
           <FactsCard snapshot={snapshot} now={now} />
-          <InstructionListCard snapshot={snapshot} />
+          <InstructionListCard
+            snapshot={snapshot}
+            renderControls={(instructionId) => {
+              const instruction = snapshot.instructions.find(
+                (item) => item.instruction_id === instructionId,
+              );
+              return instruction ? (
+                <InstructionControls
+                  runId={runId}
+                  instruction={instruction}
+                  disabled={closed}
+                  onSubmitted={feed.refresh}
+                />
+              ) : null;
+            }}
+          />
         </aside>
       </div>
     </div>

@@ -23,6 +23,11 @@ import type {
 
 export type Tone = "working" | "quiet" | "hold" | "done" | "stopped" | "alert";
 
+// Mirrors INSTRUCTION_CHARS and MESSAGE_CHARS in backend/app/domain/vocabulary.py, so
+// the operator is told the limit before losing work rather than after a refusal.
+export const INSTRUCTION_LIMIT = 4000;
+export const MESSAGE_LIMIT = 2000;
+
 export const TONE_CLASS: Record<Tone, string> = {
   working: "bg-working-surface text-working",
   quiet: "bg-quiet-surface text-quiet",

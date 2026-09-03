@@ -24,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StateBadge } from "@/components/state-badge";
 import { EmptyState } from "@/components/states";
 import { categoryOf, groupRecords, recordTitle } from "@/lib/activity";
+import { ACTION_AUDIENCE } from "@/lib/contracts";
 import {
   AUDIENCE_LABEL,
   BLOCK_REASON,
@@ -37,6 +38,7 @@ import {
 import { cn } from "@/lib/utils";
 import type {
   ActionAudience,
+  ActionName,
   ActivityKind,
   ActivityRecord,
   BlockReason,
@@ -124,29 +126,41 @@ function Details({ record }: { record: ActivityRecord }) {
 
 function ActionBody({ record }: { record: ActivityRecord }) {
   const details = record.details;
-  const audience = str(details, "audience");
+  const action = str(details, "action");
+  // A blocked proposal carries no audience of its own — it never reached the registry
+  // that supplies one — so the registry's mapping fills it in for display only.
+  const named = str(details, "audience");
+  const audience =
+    named ??
+    (action && action in ACTION_AUDIENCE
+      ? ACTION_AUDIENCE[action as ActionName]
+      : null);
   const subject = str(details, "subject");
   const category = str(details, "category");
   const content = str(details, "content");
   const reason = str(details, "reason");
   const issue = str(details, "issue_id");
-  const blocked = record.disposition !== "committed";
+  const committed = record.disposition === "committed";
 
   return (
     <>
       <Meta>
-        {audience && audience in AUDIENCE_LABEL
-          ? AUDIENCE_LABEL[audience as ActionAudience]
-          : "Recorded action"}
+        {audience
+          ? `${committed ? "Recorded for" : "Proposed to"} ${AUDIENCE_LABEL[
+              audience as ActionAudience
+            ].toLowerCase()}`
+          : committed
+            ? "Recorded action"
+            : "Proposed action"}
         {category && category in NOTE_CATEGORY_LABEL
           ? ` · ${NOTE_CATEGORY_LABEL[category as NoteCategory]}`
           : ""}
         {issue ? ` · about “${issue}”` : ""}
-        {record.disposition === "committed" ? " · simulated" : ""}
+        {committed ? " · simulated" : ""}
       </Meta>
       {subject ? <p className="mt-2 font-medium">{subject}</p> : null}
       {content ? <Quote>{content}</Quote> : null}
-      {blocked && reason ? (
+      {!committed && reason ? (
         <Meta>
           {reason in BLOCK_REASON
             ? BLOCK_REASON[reason as BlockReason]
