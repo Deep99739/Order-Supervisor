@@ -202,6 +202,13 @@ class OrderSupervisor:
             self._snapshot = data.snapshot
             self._initial_event_id = data.initial_event_id
 
+        # Which Temporal execution is serving the order right now. This is the one
+        # identifier that *should* change on rollover while the run and the workflow ID
+        # do not, so leaving it unset would hide the only difference continuation makes.
+        self._snapshot = RunSnapshot.model_validate(
+            self._document() | {"temporal_run_id": workflow.info().run_id}
+        )
+
         if self._snapshot.status in set(CLOSED_STATUS.values()):
             return self._result("already closed")
 

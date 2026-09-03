@@ -184,9 +184,25 @@ export function MemoryTab({ snapshot }: { snapshot: RunSnapshot }) {
               value={String(snapshot.counters.deferred_events)}
             />
           </div>
+          {/* The one identifier that is supposed to change on rollover, next to the one
+              that is not. Showing them together is what makes the distinction checkable. */}
+          <dl className="mt-3 space-y-2 border-t pt-3 text-[13px]">
+            <div>
+              <dt className="text-muted-foreground">Workflow</dt>
+              <dd className="mt-0.5 font-mono text-[12px] break-all">
+                {snapshot.workflow_id}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Temporal execution</dt>
+              <dd className="mt-0.5 font-mono text-[12px] break-all">
+                {snapshot.temporal_run_id ?? "not recorded"}
+              </dd>
+            </div>
+          </dl>
           <p className="mt-3 text-[13px] leading-5 text-muted-foreground">
-            Continuing the history is maintenance, not a new order. The run keeps
-            its identity, its original deadline, and everything above.
+            Continuing the history is maintenance, not a new order. The execution
+            above changes; the run, the workflow, and the original deadline do not.
           </p>
         </Panel>
       </div>
