@@ -311,6 +311,37 @@ async def test_approval_while_paused_waits_for_resume_before_it_takes_effect(poo
         assert resumed.committed_actions[0].action_id == draft.action_id
 
 
+async def test_a_restriction_arriving_mid_review_reaches_the_message_it_was_about(pool):
+    """T06's other half: an instruction delivered during a model call must govern that
+    call's own proposal, not only the next one."""
+    async with supervised(pool, order_id="ORD-ACT-LATE-RULE") as run:
+        await settled(run)
+        run.decisions.proposal = message_customer()
+
+        gate = run.decisions.hold()
+        await delay_the_order(run)
+        await asyncio.wait_for(run.decisions.started.wait(), timeout=10)
+        await run.send_instruction(
+            text="Do not contact the customer without human review.",
+            policy_changes={"require_customer_review": True},
+        )
+        gate.set()
+
+        # The episode that predates the restriction is discarded, and the reassessment
+        # under the new rule produces a draft rather than a message.
+        snapshot = await run.until(
+            lambda state: state.pending_review is not None,
+            note="a draft under the new restriction",
+        )
+        assert snapshot.counters.committed_actions == 0, "no message crossed the restriction"
+        assert snapshot.pending_review.status == "pending"
+
+        discarded = [
+            record for record in await run.entries("decision") if record.disposition == "rejected"
+        ]
+        assert discarded and discarded[0].details["reason"] == BlockReason.STALE_CONTEXT
+
+
 async def test_a_closing_run_reports_what_was_recorded_and_what_was_not(pool):
     async with supervised(pool, order_id="ORD-ACT-REPORT") as run:
         await settled(run)

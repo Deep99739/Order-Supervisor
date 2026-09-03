@@ -10,9 +10,9 @@ import asyncio
 
 import pytest
 
-from app.contracts.decision import DecisionProposal
+from app.contracts.decision import ActionProposal, DecisionProposal
 from app.domain import events as event_rules
-from app.domain.vocabulary import RunStatus
+from app.domain.vocabulary import ActionName, RunStatus
 from tests.harness import supervised
 
 pytestmark = pytest.mark.integration
@@ -29,7 +29,17 @@ async def test_a_hold_during_a_review_discards_its_conclusions(pool):
         # Hold the review open, then let an operator intervene while it is running.
         gate = run.decisions.hold()
         run.decisions.proposal = DecisionProposal(
-            rationale="Chase logistics hard.", sleep_for_seconds=60
+            rationale="Chase logistics hard.",
+            actions=[
+                ActionProposal(
+                    action=ActionName.MESSAGE_LOGISTICS_TEAM,
+                    subject="Delayed order",
+                    content="Please confirm a revised delivery date.",
+                    issue_id=event_rules.SHIPMENT_DELAY_ISSUE,
+                    rationale="The delay is open.",
+                )
+            ],
+            sleep_for_seconds=60,
         )
         await run.send_event("shipment_delayed", {"reason": "Hub backlog"})
         await asyncio.wait_for(run.decisions.started.wait(), timeout=10)
@@ -43,6 +53,11 @@ async def test_a_hold_during_a_review_discards_its_conclusions(pool):
         assert snapshot.counters.decisions == 1, "the interrupted review must not count"
         # The deadline that review would have set never took hold.
         assert snapshot.next_wake_at == first.next_wake_at
+        # And neither did the message it wanted to send.
+        assert snapshot.counters.committed_actions == 0
+        assert not any(
+            record.disposition == "committed" for record in await run.entries("action")
+        )
 
         discarded = [
             record
