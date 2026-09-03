@@ -10,6 +10,7 @@ import {
   CLOSE_REASON,
   eventLabel,
   KIND_LABEL,
+  type Tone,
 } from "./display";
 import type {
   ActionName,
@@ -119,6 +120,41 @@ export function groupRecords(records: ActivityRecord[]): FeedGroup[] {
     });
   }
   return groups;
+}
+
+/**
+ * The colour of a row's left edge. Disposition is read before kind on purpose: a refused
+ * proposal is a refusal first and an action second, and colouring it like a committed
+ * action would be the one mistake this console must never make.
+ */
+export function accentOf(record: ActivityRecord): Tone {
+  if (record.kind === "recovery" || record.disposition === "failed") return "alert";
+  if (
+    record.disposition === "blocked" ||
+    record.disposition === "pending_review" ||
+    record.disposition === "review_required" ||
+    record.disposition === "rejected" ||
+    record.disposition === "conflict" ||
+    record.disposition === "too_late" ||
+    record.disposition === "capacity_exceeded"
+  ) {
+    return "hold";
+  }
+  switch (record.kind) {
+    case "event":
+    case "run_reserved":
+      return "working";
+    case "decision":
+    case "policy":
+    case "review":
+      return "quiet";
+    case "action":
+      return record.disposition === "committed" ? "done" : "quiet";
+    case "finalization":
+      return "done";
+    default:
+      return "stopped";
+  }
 }
 
 /** Which feed filter a record belongs to. Mirrors the API's own category mapping. */

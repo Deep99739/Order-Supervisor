@@ -25,11 +25,10 @@ import {
 } from "@/components/runs/side-panels";
 import { useRun } from "@/lib/use-run";
 import { useServerNow } from "@/lib/clock";
+import { OrderProgress } from "@/components/runs/order-progress";
 import {
   durationLabel,
   isClosed,
-  progressSummary,
-  progressTone,
   relativeTime,
   supervisorState,
 } from "@/lib/display";
@@ -77,6 +76,12 @@ export function RunDetail({ runId }: { runId: string }) {
   const closedReason = closed
     ? "Supervision has closed for this order; it accepts no further commands."
     : "";
+  // A run only reads as live while it can still act on its own. Paused and
+  // awaiting_recovery both wait for a person, so they stay still.
+  const live =
+    !closed &&
+    snapshot.status !== "paused" &&
+    snapshot.status !== "awaiting_recovery";
 
   const urgent = (
     <>
@@ -165,12 +170,12 @@ export function RunDetail({ runId }: { runId: string }) {
             </p>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-4">
-            <StateBadge
-              label={progressSummary(snapshot.facts)}
-              tone={progressTone(snapshot.facts)}
-            />
-            <StateBadge label={state.label} tone={state.tone} />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-t pt-4">
+            <OrderProgress facts={snapshot.facts} closed={closed} />
+            <span aria-hidden="true" className="hidden h-5 w-px bg-border sm:block" />
+            {/* The dot only moves while a run can still act. On a closed or held run a
+                pulsing badge would imply work that is not happening. */}
+            <StateBadge label={state.label} tone={state.tone} pulse={live} />
             {/* Demo timing changes how long this run waits and nothing else. Saying so
                 where the state is read stops a short interval looking like a claim about
                 how the system normally behaves. */}

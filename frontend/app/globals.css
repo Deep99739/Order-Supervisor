@@ -120,6 +120,21 @@
   }
 }
 
+/* Two exceptions to the no-motion-on-a-poll rule below, both of which report something
+   real: a digit that changed, and a run that is genuinely still being supervised. */
+@keyframes digit-roll {
+  from {
+    opacity: 0;
+    transform: translateY(-0.4em);
+  }
+}
+@keyframes live-pulse {
+  50% {
+    opacity: 0.25;
+    transform: scale(0.72);
+  }
+}
+
 /* Overlay motion only. A transition here explains where a panel came from; nothing in
    this console animates on a poll. */
 @keyframes overlay-in {
@@ -182,6 +197,14 @@
   }
   [data-slot="popper"][data-state="open"] {
     animation: menu-in 140ms ease-out;
+  }
+  /* Only the characters that actually changed are re-keyed, so a ticking countdown rolls
+     its seconds and leaves the rest of the number still. */
+  .digit-roll {
+    animation: digit-roll 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .live-pulse {
+    animation: live-pulse 2s ease-in-out infinite;
   }
 }
 

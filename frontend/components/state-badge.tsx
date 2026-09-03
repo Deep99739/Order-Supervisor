@@ -10,11 +10,14 @@ export function StateBadge({
   tone,
   className,
   dot = true,
+  pulse = false,
 }: {
   label: string;
   tone: Tone;
   className?: string;
   dot?: boolean;
+  /** Only for a run that can still act on its own; the caller decides, not the tone. */
+  pulse?: boolean;
 }) {
   return (
     <span
@@ -28,7 +31,11 @@ export function StateBadge({
       {dot ? (
         <span
           aria-hidden="true"
-          className={cn("size-1.5 rounded-full", TONE_DOT[tone])}
+          className={cn(
+            "size-1.5 rounded-full",
+            TONE_DOT[tone],
+            pulse && "live-pulse",
+          )}
         />
       ) : null}
       {label}

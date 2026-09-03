@@ -46,6 +46,17 @@ export const TONE_DOT: Record<Tone, string> = {
   alert: "bg-alert",
 };
 
+// The left edge of a timeline row. Colour is a scanning aid only: the row still states
+// its kind in words and its disposition in a badge.
+export const TONE_EDGE: Record<Tone, string> = {
+  working: "border-l-working",
+  quiet: "border-l-quiet",
+  hold: "border-l-hold",
+  done: "border-l-done",
+  stopped: "border-l-stopped",
+  alert: "border-l-alert",
+};
+
 export type StateLabel = { label: string; tone: Tone; hint: string };
 
 const RUN_STATE: Record<RunStatus, StateLabel> = {
@@ -171,6 +182,86 @@ export function progressTone(facts: OrderFacts): Tone {
   if (facts.payment === "failed" || facts.shipment === "delayed") return "hold";
   if (facts.open_issues.length > 0) return "hold";
   return "quiet";
+}
+
+const SHIPMENT_DETAIL: Record<OrderFacts["shipment"], string> = {
+  unknown: "No shipment has been reported.",
+  not_created: "No shipment has been created.",
+  in_transit: "In transit.",
+  delayed: "Reported delayed.",
+  delivered: "Delivered.",
+};
+
+/**
+ * The order's own four milestones, for scanning. `reached` means an order event
+ * established it, `failed` means an event reported it going wrong, and `at_risk` means
+ * the step has not happened and something recorded says it may not happen on time.
+ * Nothing here is inferred from an agent decision: an action is a simulation, and a
+ * milestone is a fact.
+ */
+export type ProgressStep = {
+  label: string;
+  state: "reached" | "failed" | "at_risk" | "awaited" | "pending";
+  detail: string;
+};
+
+export function orderProgress(
+  facts: OrderFacts,
+  { closed = false }: { closed?: boolean } = {},
+): ProgressStep[] {
+  // A delayed shipment is a shipment: it was created and it is moving, just late. The
+  // lateness belongs to delivery, which is the milestone actually at risk, and marking
+  // "Shipped" wrong instead would contradict the shipment_created event.
+  const shipped =
+    facts.shipment === "in_transit" ||
+    facts.shipment === "delayed" ||
+    facts.shipment === "delivered";
+  const steps: ProgressStep[] = [
+    { label: "Created", state: "reached", detail: "The order exists and is supervised." },
+    {
+      label: "Paid",
+      state:
+        facts.payment === "confirmed"
+          ? "reached"
+          : facts.payment === "failed"
+            ? "failed"
+            : "pending",
+      detail: PAYMENT[facts.payment],
+    },
+    {
+      label: "Shipped",
+      state: shipped ? "reached" : "pending",
+      detail: SHIPMENT_DETAIL[facts.shipment],
+    },
+    {
+      label: "Delivered",
+      state:
+        facts.shipment === "delivered"
+          ? "reached"
+          : facts.shipment === "delayed"
+            ? "at_risk"
+            : "pending",
+      detail:
+        facts.shipment === "delivered"
+          ? "Delivered, which closes supervision."
+          : facts.shipment === "delayed"
+            ? "Not delivered; the shipment is reported delayed."
+            : "Not delivered yet.",
+    },
+  ];
+  // Exactly one step is the one being waited on: the earliest that is still untouched,
+  // and only when nothing recorded is already wrong. A failure or a delay is the thing
+  // to look at, so it keeps the operator's attention rather than sharing it.
+  //
+  // A closed run waits for nothing. An order can close with a milestone that no event
+  // ever established -- delivered without a recorded payment, say -- and marking that
+  // step "awaited" afterwards would promise a review that will never come.
+  const next = steps.findIndex((step) => step.state === "pending");
+  const troubled = steps.some(
+    (step) => step.state === "failed" || step.state === "at_risk",
+  );
+  if (next !== -1 && !troubled && !closed) steps[next].state = "awaited";
+  return steps;
 }
 
 export const CLOSE_REASON: Record<CloseReason, string> = {

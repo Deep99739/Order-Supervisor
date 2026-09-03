@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StateBadge } from "@/components/state-badge";
 import { EmptyState } from "@/components/states";
-import { categoryOf, groupRecords, recordTitle } from "@/lib/activity";
+import { accentOf, categoryOf, groupRecords, recordTitle } from "@/lib/activity";
 import { ACTION_AUDIENCE } from "@/lib/contracts";
 import {
   AUDIENCE_LABEL,
@@ -33,6 +33,10 @@ import {
   DISPOSITION_TONE,
   HINT_LABEL,
   NOTE_CATEGORY_LABEL,
+  TONE_CLASS,
+  TONE_DOT,
+  TONE_EDGE,
+  type Tone,
   TRIGGER_LABEL,
 } from "@/lib/display";
 import { cn } from "@/lib/utils";
@@ -73,6 +77,16 @@ const FILTERS = [
 ] as const;
 
 type FeedFilter = (typeof FILTERS)[number]["value"];
+
+// The key for the row edges. Deliberately five entries: any more and it stops being
+// readable at a glance, which is the only reason the colours are there.
+const LEGEND: { label: string; tone: Tone }[] = [
+  { label: "Order event", tone: "working" },
+  { label: "Agent", tone: "quiet" },
+  { label: "Recorded action", tone: "done" },
+  { label: "Refused or held", tone: "hold" },
+  { label: "System", tone: "stopped" },
+];
 
 function str(details: JsonObject, key: string): string | null {
   const value = details[key];
@@ -287,9 +301,17 @@ function Body({ record }: { record: ActivityRecord }) {
 
 function Entry({ record }: { record: ActivityRecord }) {
   const Icon = ICONS[record.kind];
+  const accent = accentOf(record);
   return (
-    <li className="flex gap-3 py-3.5 first:pt-0 last:pb-0">
-      <div className="flex w-16 shrink-0 flex-col items-end pt-0.5">
+    // The left edge is the only thing on this row that is purely visual. It makes a long
+    // timeline scannable by category without asking anyone to trust the colour alone.
+    <li
+      className={cn(
+        "flex gap-3 border-l-[3px] py-3 pl-3 first:rounded-tl last:rounded-bl",
+        TONE_EDGE[accent],
+      )}
+    >
+      <div className="flex w-14 shrink-0 flex-col items-end pt-0.5">
         <time
           className="text-[13px] text-muted-foreground"
           dateTime={record.recorded_at}
@@ -299,7 +321,10 @@ function Entry({ record }: { record: ActivityRecord }) {
       </div>
       <div
         aria-hidden="true"
-        className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
+        className={cn(
+          "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg",
+          TONE_CLASS[accent],
+        )}
       >
         <Icon className="size-[15px]" />
       </div>
@@ -375,23 +400,37 @@ export function ActivityFeed({
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-1.5">
-        {FILTERS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            aria-pressed={filter === option.value}
-            onClick={() => setFilter(option.value)}
-            className={cn(
-              "min-h-9 rounded-full border px-3 text-[13px] font-medium transition-colors duration-150",
-              filter === option.value
-                ? "border-primary/30 bg-accent text-accent-foreground"
-                : "border-transparent bg-muted text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {FILTERS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={filter === option.value}
+              onClick={() => setFilter(option.value)}
+              className={cn(
+                "min-h-9 rounded-full border px-3 text-[13px] font-medium transition-colors duration-150",
+                filter === option.value
+                  ? "border-primary/30 bg-accent text-accent-foreground"
+                  : "border-transparent bg-muted text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        {/* Without this the edge colours are decoration. With it they are a key. */}
+        <ul className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
+          {LEGEND.map((item) => (
+            <li key={item.label} className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className={cn("h-3.5 w-[3px] rounded-full", TONE_DOT[item.tone])}
+              />
+              {item.label}
+            </li>
+          ))}
+        </ul>
       </div>
 
       <div ref={top} />
@@ -431,7 +470,9 @@ export function ActivityFeed({
           return (
             <li
               key={group.key}
-              className={cn(grouped ? "rounded-xl border bg-muted/25 p-4" : "px-1")}
+              className={cn(
+                grouped ? "rounded-xl border bg-muted/25 px-4 py-1.5" : "px-1",
+              )}
             >
               {/* One review and everything it wrote, kept together without hiding a
                   single receipt. */}

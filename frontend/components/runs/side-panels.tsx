@@ -67,6 +67,85 @@ const SHIPMENT_WORD = {
 } as const;
 
 /**
+ * A number whose changed characters roll and whose steady ones stay put. Re-keying only
+ * the character that changed is what keeps a ticking clock from flickering as a whole.
+ */
+function RollingNumber({ value }: { value: string }) {
+  return (
+    <span className="inline-flex tabular-nums">
+      {value.split("").map((character, index) => (
+        <span
+          // Position is the stable identity here; the inner key is the character, so a
+          // digit that did not change is never remounted and never re-animates.
+          key={index}
+          className="inline-block overflow-hidden align-bottom"
+        >
+          <span key={character} className="digit-roll inline-block">
+            {character}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * How much of the recorded wait is left, as a fraction. The window is the one the run
+ * actually wrote: from the transition that recorded the sleep to the deadline it set.
+ * An overdue or unmeasurable window reads as empty rather than guessing.
+ */
+function remainingFraction(snapshot: RunSnapshot, now: number): number {
+  if (snapshot.next_wake_at === null) return 0;
+  const due = Date.parse(snapshot.next_wake_at);
+  const from = Date.parse(snapshot.updated_at);
+  const window = due - from;
+  if (!Number.isFinite(window) || window <= 0) return 0;
+  return Math.min(1, Math.max(0, (due - now) / window));
+}
+
+/** A thin depleting ring around the countdown. Decorative: the digits carry the value. */
+function CountdownRing({
+  fraction,
+  children,
+}: {
+  fraction: number;
+  children: ReactNode;
+}) {
+  const radius = 39;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <div className="relative flex size-22 shrink-0 items-center justify-center">
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 88 88"
+        className="absolute inset-0 size-full -rotate-90"
+      >
+        <circle
+          cx="44"
+          cy="44"
+          r={radius}
+          fill="none"
+          strokeWidth="3"
+          className="stroke-border"
+        />
+        <circle
+          cx="44"
+          cy="44"
+          r={radius}
+          fill="none"
+          strokeWidth="3"
+          strokeLinecap="round"
+          className="stroke-quiet transition-[stroke-dashoffset] duration-1000 ease-linear"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * (1 - fraction)}
+        />
+      </svg>
+      {children}
+    </div>
+  );
+}
+
+/**
  * The recorded deadline and why the run is waiting. A countdown that reaches zero says a
  * review is due; it never says one has happened, because only a recorded episode does.
  */
@@ -101,14 +180,21 @@ export function NextReviewCard({
           No review is scheduled. The run wakes on an event or an operator command.
         </p>
       ) : (
-        <div>
-          <p
-            className="text-2xl font-semibold tracking-tight tabular-nums"
-            aria-hidden="true"
-          >
-            {overdue ? "00:00" : countdown(snapshot.next_wake_at, now)}
-          </p>
-          <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
+        <div className="flex items-center gap-4">
+          {/* The ring depletes across the wait the run actually recorded, and stops
+              moving when the run is paused, because the deadline then stops meaning
+              "time until something happens". */}
+          <CountdownRing fraction={paused ? 1 : remainingFraction(snapshot, now)}>
+            <p
+              className="relative text-[17px] leading-5 font-semibold tracking-tight"
+              aria-hidden="true"
+            >
+              <RollingNumber
+                value={overdue ? "00:00" : countdown(snapshot.next_wake_at, now)}
+              />
+            </p>
+          </CountdownRing>
+          <p className="min-w-0 text-[13px] leading-5 text-muted-foreground">
             {paused
               ? overdue
                 ? "Paused · review overdue. Nothing runs until the operator resumes."
