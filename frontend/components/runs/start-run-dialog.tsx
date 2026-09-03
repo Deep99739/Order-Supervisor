@@ -16,6 +16,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -49,13 +57,57 @@ const BLANK: Fields = {
   promisedAt: "",
 };
 
-const EXAMPLE: Omit<Fields, "orderId"> = {
-  customer: "Sam Rivera",
-  description: "1 × Studio headphones, express delivery",
-  payment: "Authorised, awaiting capture",
-  shipment: "Not dispatched yet",
-  promisedAt: "",
-};
+/**
+ * Synthetic starting contexts for the documented walkthroughs.
+ *
+ * Each one exists so a proposed follow-up is *believable* rather than forced: an order
+ * whose payment is already captured gives the agent no reason to message payments. The
+ * order IDs are generated fresh every time, because a closed order is never reused to
+ * reset a demo.
+ */
+const SAMPLES: {
+  key: string;
+  label: string;
+  hint: string;
+  fields: Omit<Fields, "orderId">;
+}[] = [
+  {
+    key: "fulfilment",
+    label: "Express order, payment pending",
+    hint: "Scenario A — progress, selective wake, and delivery",
+    fields: {
+      customer: "Sam Rivera",
+      description: "1 × Studio headphones, express delivery",
+      payment: "Authorised, awaiting capture",
+      shipment: "Not dispatched yet",
+      promisedAt: "Within two working days",
+    },
+  },
+  {
+    key: "review",
+    label: "Fragile item, customer waiting",
+    hint: "Scenario B — instructions, customer review, and continuity",
+    fields: {
+      customer: "Priya Nair",
+      description: "2 × Ceramic desk lamp, standard delivery",
+      payment: "Captured in full",
+      shipment: "Handed to the carrier",
+      promisedAt: "Friday",
+    },
+  },
+  {
+    key: "stalled",
+    label: "High-value order, nothing moving",
+    hint: "For an inactivity probe and a fulfilment follow-up",
+    fields: {
+      customer: "Jonah Weiss",
+      description: "1 × Workshop toolset, kerbside delivery",
+      payment: "Captured in full",
+      shipment: "No dispatch record yet",
+      promisedAt: "",
+    },
+  },
+];
 
 function context(fields: Fields): JsonObject {
   const values: JsonObject = {};
@@ -133,8 +185,10 @@ export function StartRunDialog({
     [],
   );
 
-  const useExample = useCallback(() => {
-    setFields({ ...EXAMPLE, orderId: exampleOrderId() });
+  const applySample = useCallback((key: string) => {
+    const sample = SAMPLES.find((item) => item.key === key);
+    if (!sample) return;
+    setFields({ ...sample.fields, orderId: exampleOrderId() });
     setError(null);
   }, []);
 
@@ -242,15 +296,32 @@ export function StartRunDialog({
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-3">
               <Label htmlFor="start-order">Order ID</Label>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={useExample}
-              >
-                <Sparkles className="size-4" aria-hidden="true" />
-                Use example order
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="ghost" size="sm">
+                    <Sparkles className="size-4" aria-hidden="true" />
+                    Use example order
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuLabel>
+                    Clearly synthetic starting points
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {SAMPLES.map((sample) => (
+                    <DropdownMenuItem
+                      key={sample.key}
+                      className="min-h-12 flex-col items-start gap-0.5 py-2"
+                      onSelect={() => applySample(sample.key)}
+                    >
+                      <span className="font-medium">{sample.label}</span>
+                      <span className="text-[13px] text-muted-foreground">
+                        {sample.hint}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <Input
               id="start-order"
