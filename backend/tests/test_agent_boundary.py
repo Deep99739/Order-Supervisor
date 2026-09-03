@@ -233,4 +233,6 @@ def test_a_decision_request_carries_no_credentials():
         "context",
         "snapshot",
         "trigger_detail",
+        "considered",
+        "unconsidered",
     }

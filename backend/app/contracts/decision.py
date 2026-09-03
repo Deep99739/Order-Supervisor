@@ -1,4 +1,5 @@
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import Field, StringConstraints, model_validator
 
@@ -12,7 +13,7 @@ from app.contracts.common import (
     UTCDateTime,
     WireModel,
 )
-from app.contracts.run import ContextStamp, RunSnapshot
+from app.contracts.run import ActivityDisposition, ActivityKind, ContextStamp, RunSnapshot
 from app.domain.vocabulary import (
     ACTION_BATCH,
     SUMMARY_CHARS,
@@ -62,6 +63,34 @@ class WakeGuidance(WireModel):
     hints: Annotated[list[WakeHint], Field(max_length=5)]
 
 
+class EvidenceDetail(WireModel):
+    """One recorded entry, retrieved by sequence so a decision can see the input itself
+    rather than a reference to it. The stored `details` payload is deliberately not
+    carried: an explanation is what a decision needs, and envelopes are large."""
+
+    sequence: PositiveInt
+    kind: ActivityKind
+    disposition: ActivityDisposition
+    recorded_at: UTCDateTime
+    occurred_at: UTCDateTime | None = None
+    event_id: Reference | None = None
+    action_id: Reference | None = None
+    explanation: ShortText
+
+
+class EvidenceRequest(WireModel):
+    """A read of the activity log by known sequence. No search, no scan."""
+
+    run_id: UUID
+    sequences: Annotated[list[Count], Field(max_length=64)]
+
+
+class EvidenceBundle(WireModel):
+    records: Annotated[list[EvidenceDetail], Field(max_length=64)] = Field(default_factory=list)
+    # Sequences that were asked for but no longer exist; a missing row is not an error.
+    missing: Count = 0
+
+
 class DecisionRequest(WireModel):
     """One bounded decision episode. Provider retries stay attempts of this episode."""
 
@@ -71,6 +100,11 @@ class DecisionRequest(WireModel):
     context: ContextStamp
     snapshot: RunSnapshot
     trigger_detail: ShortText
+    # Defaulted so a request built before evidence assembly existed still validates.
+    considered: Annotated[list[EvidenceDetail], Field(max_length=64)] = Field(default_factory=list)
+    unconsidered: Annotated[list[EvidenceDetail], Field(max_length=64)] = Field(
+        default_factory=list
+    )
 
 
 class DecisionProposal(WireModel):

@@ -6,6 +6,7 @@ review open while an operator control or a deadline arrives.
 """
 
 import asyncio
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -19,8 +20,9 @@ from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
+from app.activities.evidence import EvidenceActivities
 from app.activities.persistence import PersistenceActivities
-from app.contracts.decision import DecisionProposal, DecisionResult
+from app.contracts.decision import DecisionProposal, DecisionRequest, DecisionResult
 from app.contracts.run import ActivityRecord, RunSnapshot
 from app.contracts.supervisor import SupervisorConfig
 from app.domain.digest import canonical_digest
@@ -48,16 +50,23 @@ class Decisions:
     fail_with: str | None = None
     gate: asyncio.Event | None = None
     started: asyncio.Event = field(default_factory=asyncio.Event)
+    # Every request the workflow assembled, so a test can assert what a decision saw.
+    requests: list[DecisionRequest] = field(default_factory=list)
+    # For answers that depend on the request, such as a summary declaring its cutoff.
+    answer: Callable[[DecisionRequest], DecisionProposal] | None = None
 
     @activity.defn(name="decide")
     async def decide(self, request: dict[str, Any]) -> dict[str, Any]:
         self.calls += 1
+        parsed = DecisionRequest.model_validate(request)
+        self.requests.append(parsed)
         self.started.set()
         if self.gate is not None:
             await self.gate.wait()
         if self.fail_with:
             raise ApplicationError(self.fail_with, type="ScriptedFailure", non_retryable=True)
-        return DecisionResult(proposal=self.proposal, provenance="scripted").model_dump(mode="json")
+        proposal = self.answer(parsed) if self.answer else self.proposal
+        return DecisionResult(proposal=proposal, provenance="scripted").model_dump(mode="json")
 
     def hold(self) -> asyncio.Event:
         self.gate = asyncio.Event()
@@ -216,7 +225,11 @@ async def supervised(
             env.client,
             task_queue=queue,
             workflows=[OrderSupervisor],
-            activities=[persistence.commit_transition, decisions.decide],
+            activities=[
+                persistence.commit_transition,
+                EvidenceActivities(pool).load_evidence,
+                decisions.decide,
+            ],
         ):
             handle = await env.client.start_workflow(
                 WORKFLOW_TYPE,

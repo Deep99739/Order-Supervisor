@@ -182,6 +182,15 @@ def _receipts(snapshot: RunSnapshot) -> str:
     return "\n".join(lines)
 
 
+def _entries(records) -> str:
+    return "\n".join(
+        f"- entry {record.sequence} [{record.kind}/{record.disposition}]"
+        + (f" at {record.occurred_at.isoformat()}" if record.occurred_at else "")
+        + f": {record.explanation}"
+        for record in records
+    )
+
+
 def decision_prompt(request: DecisionRequest) -> str:
     """Build the per-decision context. Section order is the precedence order."""
     snapshot = request.snapshot
@@ -206,6 +215,17 @@ def decision_prompt(request: DecisionRequest) -> str:
         f"KNOWN ORDER FACTS\n{_facts(snapshot)}",
         f"OPEN CONCERNS\n{_issues(snapshot)}",
         f"ALREADY RECORDED ACTIONS\n{_receipts(snapshot)}",
+        (
+            "RECENT ENTRIES\n" + _entries(request.considered)
+            if request.considered
+            else "RECENT ENTRIES\nNothing beyond what is summarised above."
+        ),
+        (
+            "NOT YET CONSIDERED — recorded, but no review has covered these\n"
+            + _entries(request.unconsidered)
+            if request.unconsidered
+            else "NOT YET CONSIDERED\nEverything recorded so far has been reviewed."
+        ),
         _fenced(
             (
                 "RUNNING SUMMARY OF THIS ORDER — covers entries up to "

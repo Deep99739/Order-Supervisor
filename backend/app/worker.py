@@ -7,6 +7,7 @@ from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
 from temporalio.worker import Worker
 
 from app.activities.decision import DecisionActivities
+from app.activities.evidence import EvidenceActivities
 from app.activities.persistence import PersistenceActivities
 from app.activities.probe import ProbeActivities
 from app.config import load_settings
@@ -35,6 +36,7 @@ async def run_worker() -> None:
             activities=[
                 ProbeActivities(pool).probe_database,
                 PersistenceActivities(pool).commit_transition,
+                EvidenceActivities(pool).load_evidence,
                 DecisionActivities(settings).decide,
             ],
             max_concurrent_activities=4,

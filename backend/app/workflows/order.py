@@ -34,7 +34,13 @@ with workflow.unsafe.imports_passed_through():
         InstructionCommand,
         ReviewCommand,
     )
-    from app.contracts.decision import ActionProposal, DecisionRequest, DecisionResult
+    from app.contracts.decision import (
+        ActionProposal,
+        DecisionRequest,
+        DecisionResult,
+        EvidenceBundle,
+        EvidenceRequest,
+    )
     from app.contracts.persistence import ProposedEntry, TransitionReceipt, TransitionRequest
     from app.contracts.run import (
         ActiveInstruction,
@@ -46,8 +52,9 @@ with workflow.unsafe.imports_passed_through():
         RunSnapshot,
     )
     from app.domain import actions as action_registry
+    from app.domain import assembly, lifecycle, memory, policy
     from app.domain import events as event_rules
-    from app.domain import lifecycle, memory, policy
+    from app.domain.assembly import Assembled
     from app.domain.authorization import (
         AdmittedAction,
         Authorization,
@@ -58,6 +65,7 @@ with workflow.unsafe.imports_passed_through():
     from app.domain.vocabulary import (
         ACTION_LEDGER,
         CLOSED_STATUS,
+        CONTEXT_BUDGET_BYTES,
         CONTROL_SIGNAL,
         EVENT_SIGNAL,
         EVIDENCE_REFERENCES,
@@ -79,6 +87,7 @@ with workflow.unsafe.imports_passed_through():
 
 COMMIT_ACTIVITY = "commit_transition"
 DECIDE_ACTIVITY = "decide"
+EVIDENCE_ACTIVITY = "load_evidence"
 COMMIT_TIMEOUT = timedelta(seconds=20)
 DECIDE_TIMEOUT = timedelta(seconds=45)
 # Bounded so a failing provider cannot become an inference loop.
@@ -792,7 +801,34 @@ class OrderSupervisor:
             control_epoch=self._snapshot.control_epoch,
             evidence_through_sequence=self._snapshot.last_sequence,
         )
-        result, attempts, failure = await self._attempt_decision(reference, trigger, detail, stamp)
+        evidence = await self._assemble_evidence()
+        oversize = assembly.over_budget(
+            DecisionRequest(
+                decision_id=reference,
+                trigger=trigger,
+                attempt=1,
+                context=stamp,
+                snapshot=self._snapshot,
+                trigger_detail=detail or "Reviewing the order.",
+                considered=evidence.considered,
+                unconsidered=evidence.unconsidered,
+            ).model_dump(mode="json")
+        )
+        if oversize is not None:
+            await self._enter_recovery(
+                reference,
+                0,
+                f"The context needed for this review is {oversize // 1024} KiB, beyond the "
+                f"{CONTEXT_BUDGET_BYTES // 1024} KiB this run will send. Nothing was "
+                "truncated. Supersede an instruction or resolve an open concern, then "
+                "resume.",
+                next_action="consolidate_context",
+            )
+            return
+
+        result, attempts, failure = await self._attempt_decision(
+            reference, trigger, detail, stamp, evidence
+        )
 
         if result is None and failure is None:
             await self._discard_decision(reference, attempts, _CONTROL_DISCARD)
@@ -846,8 +882,32 @@ class OrderSupervisor:
             self._trigger = trigger
             self._trigger_detail = detail
 
+    async def _assemble_evidence(self) -> Assembled:
+        """Read back the inputs this decision should see, by sequence.
+
+        The references live in the snapshot; the entries themselves live in the log. This
+        is the one read the workflow makes, and it never writes.
+        """
+        plan = assembly.plan(self._snapshot)
+        if not plan.sequences:
+            return Assembled()
+        raw = await workflow.execute_activity(
+            EVIDENCE_ACTIVITY,
+            EvidenceRequest(
+                run_id=self._snapshot.run_id, sequences=list(plan.sequences)
+            ).model_dump(mode="json"),
+            start_to_close_timeout=COMMIT_TIMEOUT,
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
+        return assembly.split(plan, EvidenceBundle.model_validate(raw).records)
+
     async def _attempt_decision(
-        self, reference: str, trigger: Any, detail: str, stamp: ContextStamp
+        self,
+        reference: str,
+        trigger: Any,
+        detail: str,
+        stamp: ContextStamp,
+        evidence: Assembled,
     ) -> tuple[DecisionResult | None, int, str | None]:
         failure: str | None = None
         attempts = 0
@@ -860,6 +920,8 @@ class OrderSupervisor:
                 context=stamp,
                 snapshot=self._snapshot,
                 trigger_detail=detail or "Reviewing the order.",
+                considered=evidence.considered,
+                unconsidered=evidence.unconsidered,
             )
             handle = workflow.start_activity(
                 DECIDE_ACTIVITY,
@@ -926,8 +988,11 @@ class OrderSupervisor:
         document["counters"]["decisions"] += 1
         document["counters"]["model_attempts"] += attempts
         document["last_decision_through_sequence"] = stamp.evidence_through_sequence
-        # This episode considered the evidence deferred up to its cutoff.
-        document["deferred_evidence"] = []
+        # Only evidence up to this decision's own input cutoff counts as considered.
+        # Anything that arrived while the model was thinking is still waiting for a look.
+        document["deferred_evidence"] = assembly.still_pending(
+            self._snapshot, stamp.evidence_through_sequence
+        )
         if verdict.commits_anything:
             # A recorded effect and a waiting draft are both material context for the
             # next decision, so anything prepared against the old one is now stale.
@@ -1212,13 +1277,20 @@ class OrderSupervisor:
             )
         await self._commit(RunSnapshot.model_validate(document), entries)
 
-    async def _enter_recovery(self, reference: str, attempts: int, failure: str) -> None:
+    async def _enter_recovery(
+        self,
+        reference: str,
+        attempts: int,
+        failure: str,
+        *,
+        next_action: str = "retry_decision",
+    ) -> None:
         document = self._document()
         document["status"] = str(RunStatus.AWAITING_RECOVERY)
         document["counters"]["model_attempts"] += attempts
         document["recovery"] = {
             "reason": failure[:500],
-            "next_action": "retry_decision",
+            "next_action": next_action,
         }
         await self._commit(
             RunSnapshot.model_validate(document),
