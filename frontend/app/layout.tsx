@@ -40,13 +40,15 @@ export default function RootLayout({
               <div className="border-t px-3 py-2 md:mt-10 md:border-t-0 md:px-0 md:py-0">
                 <Navigation />
               </div>
-              <div className="mt-auto hidden px-3 pt-8 md:block">
-                <p className="text-[13px] font-medium">Local workspace</p>
-                <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
-                  Every recorded action here
-                  <br />
-                  is a simulation.
-                </p>
+              {/* A hard line break here fought the natural wrap and produced three
+                  ragged lines. The sentence is short enough to wrap on its own. */}
+              <div className="mt-auto hidden px-1 pt-8 md:block">
+                <div className="rounded-xl border border-dashed px-3 py-2.5">
+                  <p className="text-[13px] font-medium">Local workspace</p>
+                  <p className="mt-1 text-[13px] leading-5 text-pretty text-muted-foreground">
+                    Every recorded action is a simulation.
+                  </p>
+                </div>
               </div>
             </aside>
             <div className="min-w-0">
