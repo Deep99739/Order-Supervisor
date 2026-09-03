@@ -13,14 +13,15 @@ import pytest
 from pydantic import SecretStr
 
 from app.activities.decision import _clean
-from app.agent.prompt import INVARIANTS, decision_prompt
+from app.agent.prompt import CLOSURE_CAUSE, INVARIANTS, decision_prompt, report_prompt
 from app.agent.providers import ProviderError, build_provider, parse_json
 from app.agent.schema import proposal_schema, to_openapi
 from app.config import discover_api_keys
 from app.contracts.decision import ContextStamp, DecisionProposal, DecisionRequest
+from app.contracts.report import ReportNarrative, ReportRequest
 from app.contracts.supervisor import SupervisorConfig
 from app.domain.presets import PRESETS
-from app.domain.vocabulary import ActionName
+from app.domain.vocabulary import ActionName, CloseReason
 from tests.conftest import RULES_NOW, sample_snapshot
 
 
@@ -264,3 +265,30 @@ def test_a_decision_request_carries_no_credentials():
         "considered",
         "unconsidered",
     }
+
+
+def test_every_closure_cause_is_stated_in_words():
+    """The bare enum plus "decided by the workflow" produced closing text claiming the
+    workflow had terminated a run an operator terminated. Each reason needs its own
+    sentence, and a new reason must not fall back to a vague one."""
+    for reason in CloseReason:
+        assert reason in CLOSURE_CAUSE, f"{reason} has no stated cause"
+        assert CLOSURE_CAUSE[reason].strip()
+
+    assert "operator" in CLOSURE_CAUSE[CloseReason.MANUALLY_TERMINATED]
+    assert "delivered" in CLOSURE_CAUSE[CloseReason.DELIVERED]
+
+    snapshot = sample_snapshot()
+    prompt = report_prompt(
+        ReportRequest(
+            run_id=snapshot.run_id,
+            close_reason=CloseReason.MANUALLY_TERMINATED,
+            closed_at=RULES_NOW,
+            evidence_through_sequence=snapshot.last_sequence,
+            snapshot=snapshot,
+            factual=ReportNarrative(summary="Rendered from the record."),
+        )
+    )
+    assert "an operator ended supervision from the console" in prompt
+    # The model is still told the decision is not its to revisit.
+    assert "you cannot change it" in prompt

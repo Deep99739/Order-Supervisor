@@ -18,12 +18,23 @@ from app.contracts.run import RunSnapshot
 from app.domain.actions import REGISTRY
 from app.domain.authorization import follow_up_interval
 from app.domain.policy import effective_policy
-from app.domain.vocabulary import ActionName
+from app.domain.vocabulary import ActionName, CloseReason
 
 LISTED_ISSUES = 12
 LISTED_RECEIPTS = 8
 # A closing report may list more than a decision needs to see.
 LISTED_REPORT_ACTIONS = 24
+
+# Who actually ended supervision, in words. Handing the model the bare enum next to
+# "this was decided by the workflow" produced closing text claiming the workflow had
+# terminated a run an operator terminated — true of the mechanism, false of the cause.
+CLOSURE_CAUSE = {
+    CloseReason.DELIVERED: "the order was delivered, which is a terminal order event",
+    CloseReason.MANUALLY_TERMINATED: "an operator ended supervision from the console",
+    CloseReason.MAXIMUM_AGE_REACHED: (
+        "the run reached the maximum supervision age its template was configured with"
+    ),
+}
 FENCE = "-" * 60
 
 INVARIANTS = """\
@@ -334,8 +345,10 @@ def report_prompt(request: ReportRequest) -> str:
         ),
         (
             "WHY SUPERVISION ENDED\n"
-            f"{request.close_reason}. This was decided by the workflow, not by you, and "
-            "it cannot be changed here."
+            f"{request.close_reason}: "
+            f"{CLOSURE_CAUSE.get(request.close_reason, 'a workflow lifecycle rule fired')}. "
+            "The workflow applied that rule. You are not being asked whether it was right, "
+            "and you cannot change it — state the cause accurately and move on."
         ),
         f"LAST KNOWN ORDER FACTS\n{_facts(snapshot)}",
         f"ACTIONS ACTUALLY RECORDED (all simulated)\n{_committed(request.committed)}",

@@ -220,7 +220,13 @@ export function SupervisorEditor({
               ...draft,
               expected_version: record.config.version,
             })
-          : await createSupervisor({ ...draft, name: `${draft.name} (copy)` });
+          : // A name the operator has already changed is the name they meant. Only an
+            // untouched one needs disambiguating from the configuration it came from.
+            await createSupervisor({
+              ...draft,
+              name:
+                draft.name === record.config.name ? `${draft.name} (copy)` : draft.name,
+            });
       setSaved(
         intent === "update"
           ? `Saved as version ${result.config.version}.`

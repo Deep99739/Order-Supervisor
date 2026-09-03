@@ -13,8 +13,10 @@ Three boundaries are load bearing here:
 * **Nothing crosses a control boundary silently.** Intent latched during inference kills
   the result it would otherwise have authorised.
 
-Business actions and the real provider belong to the next phase; a proposal is recorded
-here as `proposed` and executes nothing.
+A proposal becomes an effect only through `app/domain/authorization.py`, and only after the
+inbox has been drained again. Each authorised action commits in the same transition as the
+decision that produced it, the refusals beside it, and the sleep record — so history never
+shows an action without the reasoning that asked for it.
 """
 
 import asyncio
