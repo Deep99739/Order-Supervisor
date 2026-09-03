@@ -19,6 +19,7 @@ from app.domain.vocabulary import (
     INSTRUCTION_CHARS,
     MESSAGE_CHARS,
     PAYLOAD_BYTES,
+    SUBJECT_CHARS,
 )
 
 
@@ -43,6 +44,9 @@ ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 Reference = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 Message = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MESSAGE_CHARS)
+]
+Subject = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=SUBJECT_CHARS)
 ]
 Digest = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 

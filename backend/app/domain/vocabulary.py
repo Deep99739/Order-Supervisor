@@ -5,17 +5,28 @@ PAYLOAD_BYTES = 8192
 # Audit details must hold accepted commands and decision batches with their metadata.
 ACTIVITY_DETAILS_BYTES = 128 * 1024
 MESSAGE_CHARS = 2000
+SUBJECT_CHARS = 120
 INSTRUCTION_CHARS = 4000
 SUMMARY_CHARS = 1500
 PENDING_COMMANDS = 128
 RECENT_RECORDS = 12
 EVIDENCE_REFERENCES = 128
 ACTION_BATCH = 5
+# The committed actions a run carries as working context. The complete list of receipts
+# always stays in the activity log; this is the bounded view a decision and the closing
+# report can rely on.
+ACTION_LEDGER = 32
+# A second contact to the same audience about unchanged work becomes eligible after this
+# many default review intervals, so the pause scales with the template's own timing.
+FOLLOW_UP_INTERVALS = 6
 STANDARD_WAKE = (30, 300, 3600)
 DEMO_WAKE = (10, 20, 60)
 DEMO_MAXIMUM_AGE_SECONDS = 1800
 PROVIDER_TIMEOUT_SECONDS = 30
 PROVIDER_ATTEMPTS = 2
+# A refused request (rate limit, transient outage) may move to the next configured key.
+# This bounds that transport rotation; it never buys another reasoning attempt.
+PROVIDER_KEYS_PER_ATTEMPT = 3
 
 
 class ActionName(StrEnum):
@@ -24,6 +35,37 @@ class ActionName(StrEnum):
     MESSAGE_LOGISTICS_TEAM = "message_logistics_team"
     MESSAGE_CUSTOMER = "message_customer"
     CREATE_INTERNAL_NOTE = "create_internal_note"
+
+
+class ActionAudience(StrEnum):
+    """Who a recorded action is directed at. Supplied by the registry, never by the model."""
+
+    FULFILLMENT_TEAM = "fulfillment_team"
+    PAYMENTS_TEAM = "payments_team"
+    LOGISTICS_TEAM = "logistics_team"
+    CUSTOMER = "customer"
+    INTERNAL = "internal"
+
+
+class NoteCategory(StrEnum):
+    OBSERVATION = "observation"
+    ESCALATION = "escalation"
+    RECOMMENDATION = "recommendation"
+
+
+class BlockReason(StrEnum):
+    """Why one proposal did not become an effect. These are different operator decisions,
+    so they stay distinguishable in history rather than collapsing into "failed"."""
+
+    RUN_CLOSING = "run_closing"
+    RUN_HELD = "run_held"
+    STALE_CONTEXT = "stale_context"
+    NOT_PERMITTED = "not_permitted"
+    INVALID_ARGUMENTS = "invalid_arguments"
+    UNKNOWN_ISSUE = "unknown_issue"
+    REPEATED_CONTACT = "repeated_contact"
+    APPROVAL_REQUIRED = "approval_required"
+    DRAFT_PENDING = "draft_pending"
 
 
 class RunStatus(StrEnum):

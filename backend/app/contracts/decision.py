@@ -8,6 +8,7 @@ from app.contracts.common import (
     PositiveInt,
     Reference,
     ShortText,
+    Subject,
     UTCDateTime,
     WireModel,
 )
@@ -18,12 +19,18 @@ from app.domain.vocabulary import (
     ActionName,
     DecisionTrigger,
     KnownEvent,
+    NoteCategory,
 )
 
 
 class ActionProposal(WireModel):
+    """What the agent asks for. Which fields an individual action actually requires is
+    the registry's business, so this stays the transport shape and nothing more."""
+
     action: ActionName
     content: Message
+    subject: Subject | None = None
+    category: NoteCategory | None = None
     issue_id: Reference | None = None
     rationale: ShortText
 

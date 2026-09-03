@@ -44,8 +44,31 @@
     "expected_at": null,
     "delivered_at": null,
     "delivery_evidence_reference": null,
-    "last_relevant_progress_at": null,
-    "open_issues": []
+    "last_relevant_progress_at": "2026-09-03T02:58:00Z",
+    "open_issues": [
+      {
+        "issue_id": "shipment-delay",
+        "description": "Shipment delayed: hub backlog",
+        "evidence": [
+          {
+            "sequence": 3,
+            "activity_id": "0d4b6b52-6a52-4c1d-95f4-1f4e6a3d9c11"
+          }
+        ],
+        "review_required": false,
+        "contacts": [
+          {
+            "audience": "logistics_team",
+            "action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1/action/1",
+            "context_version": 2,
+            "contacted_at": "2026-09-03T03:00:02Z",
+            "follow_up_at": "2026-09-03T03:30:02Z"
+          }
+        ],
+        "last_action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1/action/1",
+        "follow_up_at": "2026-09-03T03:30:02Z"
+      }
+    ]
   },
   "recorded_revision": 4,
   "context_version": 2,
@@ -69,16 +92,43 @@
   "updated_at": "2026-09-03T03:00:02Z",
   "closed_at": null,
   "execution_generation": 0,
-  "pending_review": null,
+  "pending_review": {
+    "draft_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/draft/1",
+    "decision_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1",
+    "action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1/action/2",
+    "content": "Your order is delayed at the carrier hub. We have asked logistics for a revised date and will write again as soon as we have one.",
+    "content_digest": "3d2f1b8c4a6e5079bfc1d2e3a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7",
+    "reason": "This run requires human review before the customer is contacted.",
+    "context": {
+      "context_version": 2,
+      "control_epoch": 0,
+      "evidence_through_sequence": 6
+    },
+    "status": "pending",
+    "review_command_id": null
+  },
   "recovery": null,
+  "committed_actions": [
+    {
+      "action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1/action/1",
+      "action": "message_logistics_team",
+      "content": "Order EXAMPLE-1042 is delayed at the hub. Please confirm a revised delivery date.",
+      "receipt": {
+        "sequence": 5,
+        "activity_id": "9a1c7f30-2b48-4d6a-8e51-7c0d3f2a6b84"
+      },
+      "recorded_at": "2026-09-03T03:00:02Z",
+      "simulated": true
+    }
+  ],
   "counters": {
-    "unique_events": 0,
+    "unique_events": 2,
     "duplicate_events": 0,
-    "decisions": 0,
-    "model_attempts": 0,
+    "decisions": 1,
+    "model_attempts": 1,
     "deferred_events": 0,
-    "committed_actions": 0,
-    "compactions": 0,
+    "committed_actions": 1,
+    "compactions": 1,
     "continuations": 0
   },
   "final_output": null

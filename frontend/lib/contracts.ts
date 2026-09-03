@@ -121,11 +121,41 @@ export interface EvidenceReference {
   activity_id: UUID;
 }
 
+// Who a recorded action was directed at. Supplied by the action registry, never by the
+// model, so the console can label an audience without trusting generated text.
+export type ActionAudience =
+  | "fulfillment_team"
+  | "payments_team"
+  | "logistics_team"
+  | "customer"
+  | "internal";
+
+export const ACTION_AUDIENCE: Record<ActionName, ActionAudience> = {
+  message_fulfillment_team: "fulfillment_team",
+  message_payments_team: "payments_team",
+  message_logistics_team: "logistics_team",
+  message_customer: "customer",
+  create_internal_note: "internal",
+};
+
+export type NoteCategory = "observation" | "escalation" | "recommendation";
+
+export interface IssueContact {
+  audience: ActionAudience;
+  action_id: string;
+  context_version: number;
+  contacted_at: UTCDateTime;
+  follow_up_at: UTCDateTime;
+}
+
 export interface OpenIssue {
   issue_id: string;
   description: string;
   evidence: EvidenceReference[];
   review_required: boolean;
+  // `contacts` decides whether another message is justified; the two fields below
+  // summarise the most recent one for display.
+  contacts: IssueContact[];
   last_action_id: string | null;
   follow_up_at: UTCDateTime | null;
 }
@@ -165,11 +195,15 @@ export interface ContextStamp {
   evidence_through_sequence: number;
 }
 
+// At most one current draft per run. "outdated" is the stale state; a consumed draft is
+// an absence, because approval is spent in the transaction that records the message.
 export interface CustomerDraft {
   draft_id: string;
   decision_id: string;
+  action_id: string;
   content: string;
   content_digest: string;
+  reason: string;
   context: ContextStamp;
   status: "pending" | "approved" | "rejected" | "outdated";
   review_command_id: UUID | null;
@@ -249,6 +283,8 @@ export interface RunSnapshot {
   execution_generation: number;
   pending_review: CustomerDraft | null;
   recovery: RecoveryDetail | null;
+  // The bounded working view of committed receipts. The activity log stays complete.
+  committed_actions: CommittedAction[];
   counters: RunCounters;
   final_output: FinalOutput | null;
 }
@@ -303,9 +339,13 @@ export interface ActivityRecord {
   details: JsonObject;
 }
 
+// What the agent asks for. Which fields a given action actually requires is enforced by
+// the backend registry, so this stays the transport shape.
 export interface ActionProposal {
   action: ActionName;
   content: string;
+  subject?: string | null;
+  category?: NoteCategory | null;
   issue_id?: string | null;
   rationale: string;
 }
@@ -430,6 +470,19 @@ export type PolicyOutcome = "wake_now" | "deferred" | "review_required";
 
 // A scripted stand-in decision must never be shown as a model decision.
 export type DecisionProvenance = "scripted" | "model";
+
+// Read from a blocked action record's `details`. These stay distinct because they are
+// different operator decisions: "not allowed" is not "already asked them".
+export type BlockReason =
+  | "run_closing"
+  | "run_held"
+  | "stale_context"
+  | "not_permitted"
+  | "invalid_arguments"
+  | "unknown_issue"
+  | "repeated_contact"
+  | "approval_required"
+  | "draft_pending";
 
 // Records ascend by sequence. `through_sequence` is the bound that was applied, so a
 // newer receipt is never merged into an older view of the order's facts.

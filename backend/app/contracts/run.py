@@ -18,11 +18,13 @@ from app.contracts.common import (
 )
 from app.contracts.supervisor import SupervisorConfig
 from app.domain.vocabulary import (
+    ACTION_LEDGER,
     CLOSED_STATUS,
     EVIDENCE_REFERENCES,
     INSTRUCTION_CHARS,
     RECENT_RECORDS,
     SUMMARY_CHARS,
+    ActionAudience,
     ActionName,
     CloseReason,
     ControlKind,
@@ -36,11 +38,25 @@ class EvidenceReference(WireModel):
     activity_id: UUID
 
 
+class IssueContact(WireModel):
+    """One committed contact about one issue. Deciding whether to write again needs the
+    audience, what was known at the time, and when a follow-up becomes fair."""
+
+    audience: ActionAudience
+    action_id: Reference
+    context_version: Count
+    contacted_at: UTCDateTime
+    follow_up_at: UTCDateTime
+
+
 class OpenIssue(WireModel):
     issue_id: Reference
     description: ShortText
     evidence: Annotated[list[EvidenceReference], Field(min_length=1, max_length=12)]
     review_required: bool = False
+    # `contacts` is the authority for repeated-contact checks; the two fields below
+    # summarise the most recent contact for display.
+    contacts: Annotated[list[IssueContact], Field(max_length=5)] = Field(default_factory=list)
     last_action_id: Reference | None = None
     follow_up_at: UTCDateTime | None = None
 
@@ -83,10 +99,16 @@ class ContextStamp(WireModel):
 
 
 class CustomerDraft(WireModel):
+    """At most one current customer draft per run. `outdated` is the state the plan calls
+    stale; a consumed draft is not a state but an absence, because approval is spent in
+    the same transaction that records the customer effect."""
+
     draft_id: Reference
     decision_id: Reference
+    action_id: Reference
     content: Message
     content_digest: Digest
+    reason: ShortText
     context: ContextStamp
     status: Literal["pending", "approved", "rejected", "outdated"]
     review_command_id: UUID | None = None
@@ -172,6 +194,11 @@ class RunSnapshot(WireModel):
     execution_generation: Count = 0
     pending_review: CustomerDraft | None = None
     recovery: RecoveryDetail | None = None
+    # The bounded working view of what has actually been done. Every receipt also stays
+    # in the activity log, which remains the complete record.
+    committed_actions: Annotated[list[CommittedAction], Field(max_length=ACTION_LEDGER)] = Field(
+        default_factory=list
+    )
     counters: RunCounters = Field(default_factory=RunCounters)
     final_output: FinalOutput | None = None
 
