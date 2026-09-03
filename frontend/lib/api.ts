@@ -32,6 +32,7 @@ export class ApiError extends Error {
       status?: number;
       retryable?: boolean;
       fieldDetails?: Record<string, string>;
+      runId?: string;
     } = {},
   ) {
     super(message);
@@ -48,6 +49,11 @@ export class ApiError extends Error {
 
   get fieldDetails(): Record<string, string> {
     return this.detail.fieldDetails ?? {};
+  }
+
+  /** Present when the API named an existing run, such as an order already supervised. */
+  get runId(): string | undefined {
+    return this.detail.runId;
   }
 }
 
@@ -95,6 +101,7 @@ function describe(status: number, body: unknown): ApiError {
           error.field_details && typeof error.field_details === "object"
             ? (error.field_details as Record<string, string>)
             : undefined,
+        runId: typeof error.run_id === "string" ? error.run_id : undefined,
       });
     }
   }

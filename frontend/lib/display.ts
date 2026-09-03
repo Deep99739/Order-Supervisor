@@ -334,6 +334,22 @@ export function relativeTime(iso: string, now: number): string {
   return `${Math.round(hours / 24)} d ago`;
 }
 
+/**
+ * How long until a recorded deadline. Past it, the wording stays about the deadline
+ * rather than about work: a passed timer is not evidence that a review happened.
+ */
+export function untilTime(iso: string, now: number): string {
+  const seconds = Math.round((Date.parse(iso) - now) / 1000);
+  if (!Number.isFinite(seconds)) return "unknown";
+  if (seconds <= 0) return "due";
+  if (seconds < 60) return `in ${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `in ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `in ${hours} h`;
+  return `in ${Math.round(hours / 24)} d`;
+}
+
 /** `mm:ss` for anything under an hour, `h:mm:ss` above it. Never negative. */
 export function countdown(targetIso: string, now: number): string {
   const remaining = Math.max(0, Math.round((Date.parse(targetIso) - now) / 1000));
