@@ -291,6 +291,7 @@ export interface RunSnapshot {
   execution_generation: number;
   pending_review: CustomerDraft | null;
   recovery: RecoveryDetail | null;
+  wake_guidance: WakeGuidance | null;
   // The bounded working view of committed receipts. The activity log stays complete.
   committed_actions: CommittedAction[];
   counters: RunCounters;
@@ -362,17 +363,22 @@ export interface MemoryRefresh {
   text: string;
   through_sequence: number;
 }
+// A finite hint vocabulary, not generated rules: the classifier stays inspectable.
+// A hint can bring a review forward or let routine progress pass; it can never grant
+// permission, silence a terminal event, or override an operator restriction.
 export interface WakeHint {
-  kind: "watch_for_progress" | "shorten_review" | "await_response";
-  issue_id: string;
+  kind: "watch_for_progress" | "shorten_review" | "defer_routine";
   expires_at: UTCDateTime;
-  event_type?: KnownEvent | null;
-  review_after_seconds?: number | null;
+  issue_id: string | null;
+  event_type: KnownEvent | null;
+  review_after_seconds: number | null;
 }
+
 export interface WakeGuidance {
   version: number;
   context: ContextStamp;
   hints: WakeHint[];
+  source_decision_id: string | null;
 }
 
 export interface DecisionProposal {

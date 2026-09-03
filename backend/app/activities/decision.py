@@ -27,7 +27,7 @@ from app.contracts.decision import (
     MemoryRefresh,
     ProviderUsage,
 )
-from app.contracts.run import RunSnapshot
+from app.contracts.run import WakeHint
 from app.domain import events as event_rules
 from app.domain import memory
 from app.domain.policy import effective_policy
@@ -66,7 +66,7 @@ class DecisionActivities:
         if self.settings.agent_mode == "scripted":
             # A deterministic stand-in, labelled as one wherever it is recorded.
             return DecisionResult(
-                proposal=_scripted(parsed.snapshot), provenance="scripted"
+                proposal=_scripted(parsed), provenance="scripted"
             ).model_dump(mode="json")
         return (await self._model_decision(parsed)).model_dump(mode="json")
 
@@ -81,6 +81,7 @@ class DecisionActivities:
             maximum=profile.default_seconds if urgent else profile.maximum_seconds,
             cutoff=request.context.evidence_through_sequence,
             offer_memory=memory.refresh_due(snapshot),
+            issue_ids=[issue.issue_id for issue in snapshot.facts.open_issues],
         )
 
         try:
@@ -105,7 +106,9 @@ class DecisionActivities:
             ) from None
 
         try:
-            proposal = DecisionProposal.model_validate(_clean(parse_json(reply.text)))
+            proposal = DecisionProposal.model_validate(
+                _clean(parse_json(reply.text), request)
+            )
         except ProviderError as error:
             raise _failure("MalformedProposal", str(error), retryable=False) from None
         except Exception as error:  # noqa: BLE001 - reported to the operator as-is
@@ -139,10 +142,15 @@ def _failure(kind: str, message: str, *, retryable: bool) -> ApplicationError:
     return ApplicationError(message[:1000], type=kind, non_retryable=not retryable)
 
 
-def _clean(payload: dict[str, Any]) -> dict[str, Any]:
-    """Drop the nulls a strict schema forces a model to emit, and anything from a later
-    phase it was not asked for. Unexpected keys are removed rather than rejected — the
-    proposal contract still decides whether what remains is usable."""
+def _clean(payload: dict[str, Any], request: DecisionRequest) -> dict[str, Any]:
+    """Drop the nulls a strict schema forces a model to emit, and shape what remains.
+
+    Unexpected keys are removed rather than rejected — the proposal contract still
+    decides whether what is left is usable. Wake hints arrive as a flat list because the
+    version and context stamp are not the model's to assign; they are filled in here from
+    the decision's own input, so guidance that outlives its context is caught as stale
+    rather than quietly believed.
+    """
     known = set(DecisionProposal.model_fields)
     cleaned = {key: value for key, value in payload.items() if key in known and value is not None}
     actions = cleaned.get("actions")
@@ -153,11 +161,24 @@ def _clean(payload: dict[str, Any]) -> dict[str, Any]:
             for item in actions
             if isinstance(item, dict)
         ]
+    hints = payload.get("wake_hints")
+    if isinstance(hints, list) and hints:
+        fields = set(WakeHint.model_fields)
+        cleaned["wake_guidance"] = {
+            "version": 1,
+            "context": request.context.model_dump(mode="json"),
+            "hints": [
+                {key: value for key, value in hint.items() if key in fields and value is not None}
+                for hint in hints
+                if isinstance(hint, dict)
+            ],
+        }
     return cleaned
 
 
-def _scripted(snapshot: RunSnapshot) -> DecisionProposal:
+def _scripted(request: DecisionRequest) -> DecisionProposal:
     """A deterministic stand-in decision derived from the run's own recorded facts."""
+    snapshot = request.snapshot
     facts = snapshot.facts
     allowed = set(snapshot.supervisor.allowed_actions)
     policy = effective_policy(snapshot)

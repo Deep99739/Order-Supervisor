@@ -6,10 +6,12 @@ rule is only meaningful if the run really does stop marking things considered.
 """
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
 from app.contracts.decision import DecisionProposal, MemoryRefresh
+from app.contracts.run import WakeGuidance, WakeHint
 from app.domain import events as event_rules
 from app.domain.presets import PRESETS, demo_timing
 from app.domain.vocabulary import RunStatus
@@ -160,6 +162,80 @@ async def test_a_summary_claiming_unseen_evidence_is_refused_and_the_old_one_sta
         assert "Everything is resolved" not in latest.memory.text
         assert latest.memory.provenance == "deterministic"
         assert latest.memory.summary_version >= opening.memory.summary_version
+
+
+# --- generated wake guidance ------------------------------------------------------------------
+
+
+def watching(request, issue_id, event_type, expires_at):
+    return DecisionProposal(
+        rationale="I want to know as soon as the shipment moves.",
+        sleep_for_seconds=300,
+        wake_guidance=WakeGuidance(
+            version=1,
+            context=request.context,
+            hints=[
+                WakeHint(
+                    kind="watch_for_progress",
+                    issue_id=issue_id,
+                    event_type=event_type,
+                    expires_at=expires_at,
+                )
+            ],
+        ),
+    )
+
+
+async def test_a_generated_hint_changes_what_a_later_event_does(pool):
+    """The demonstration: shipment_created is ordinary progress until the agent asks."""
+    async with supervised(pool, order_id="ORD-GUIDE-WATCH") as run:
+        await settled(run)
+        expires = (await run.now()) + timedelta(hours=2)
+        run.decisions.answer = lambda request: watching(
+            request, event_rules.REFUND_ISSUE, "shipment_created", expires
+        )
+        await run.send_event("refund_requested", {"reason": "Arrived damaged"})
+        adopted = await run.until(
+            lambda state: state.wake_guidance is not None, note="the hint to be adopted"
+        )
+        assert adopted.wake_guidance.version == 1
+        assert adopted.wake_guidance.source_decision_id
+
+        run.decisions.answer = None
+        reviews = adopted.counters.decisions
+        await run.send_event("shipment_created", {"shipment_reference": "SHP-1"})
+        woken = await run.until(
+            lambda state: state.counters.decisions > reviews,
+            note="the watched event to wake the agent",
+        )
+        assert woken.counters.deferred_events == 0, "it was not merely recorded"
+
+        policies = await run.entries("policy")
+        watched = [item for item in policies if item.details.get("guidance_hint")]
+        assert watched and watched[-1].details["guidance_hint"] == "watch_for_progress"
+        assert watched[-1].details["guidance_version"] == 1
+        assert "asked to be woken" in watched[-1].explanation
+
+
+async def test_a_hint_the_run_cannot_honour_is_refused_without_losing_the_deadline(pool):
+    async with supervised(pool, order_id="ORD-GUIDE-REFUSED") as run:
+        first = await settled(run)
+        expires = (await run.now()) + timedelta(hours=2)
+        run.decisions.answer = lambda request: watching(
+            request, "invented-concern", "shipment_created", expires
+        )
+        await run.send_event("refund_requested", {"reason": "Arrived damaged"})
+        after = await run.until(
+            lambda state: state.counters.decisions > first.counters.decisions,
+            note="the review to record",
+        )
+        assert after.wake_guidance is None, "nothing unusable was adopted"
+        assert after.next_wake_at is not None, "and the run still has a next review"
+
+        refused = [
+            item for item in await run.entries("policy") if item.disposition == "rejected"
+        ]
+        assert refused and refused[0].details["reason"] == "unknown_issue"
 
 
 async def test_a_held_run_keeps_its_summary_current_without_a_model_call(pool):

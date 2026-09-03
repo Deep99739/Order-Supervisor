@@ -40,8 +40,10 @@ class PolicyDecision:
     wake: bool
     review_required: bool
     reason: str
-    # Filled once the agent may propose guidance; the policy records which version it used.
+    # Which guidance, if any, this outcome depended on. Recorded either way, so a later
+    # reader can tell an agent-influenced wake from a template one.
     guidance_version: int | None = None
+    guidance_hint: str | None = None
 
 
 def effective_policy(snapshot: RunSnapshot) -> EffectivePolicy:
@@ -89,9 +91,16 @@ def classify(
     snapshot: RunSnapshot,
     event_type: str,
     *,
+    hints: tuple = (),
     guidance_version: int | None = None,
 ) -> PolicyDecision:
-    """Decide whether this admitted event should wake the main agent now."""
+    """Decide whether this admitted event should wake the main agent now.
+
+    The order below is the safety property. Terminal evidence, an unresolvable payload,
+    and an operator's standing escalation are settled before any generated guidance is
+    consulted, so a hint can only influence what was still genuinely open to judgement.
+    """
+    # 1. Rules that are not open to influence.
     if outcome.terminal:
         return PolicyDecision(
             "wake_now",
@@ -120,6 +129,36 @@ def classify(
             guidance_version=guidance_version,
         )
 
+    # 2. Only now does what the agent asked for come into it.
+    watching = _hint(hints, "watch_for_progress", event_type)
+    if watching is not None:
+        return PolicyDecision(
+            "wake_now",
+            wake=True,
+            review_required=False,
+            reason=(
+                f"{outcome.explanation} The agent asked to be woken by {event_type} while "
+                f"{watching.issue_id} is open."
+            ),
+            guidance_version=guidance_version,
+            guidance_hint=watching.kind,
+        )
+
+    settled = not outcome.facts.open_issues
+    deferring = _hint(hints, "defer_routine", event_type) if settled else None
+    if deferring is not None:
+        return PolicyDecision(
+            "deferred",
+            wake=False,
+            review_required=False,
+            reason=(
+                f"{outcome.explanation} The agent asked for routine {event_type} to be "
+                "recorded without a review while nothing is unresolved."
+            ),
+            guidance_version=guidance_version,
+            guidance_hint=deferring.kind,
+        )
+
     if outcome.importance == "important":
         return PolicyDecision(
             "wake_now",
@@ -136,3 +175,10 @@ def classify(
         reason=f"{outcome.explanation} The next scheduled review still stands.",
         guidance_version=guidance_version,
     )
+
+
+def _hint(hints: tuple, kind: str, event_type: str):
+    for hint in hints:
+        if hint.kind == kind and hint.event_type == event_type:
+            return hint
+    return None

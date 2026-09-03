@@ -110,7 +110,8 @@ def test_the_nulls_a_strict_schema_forces_are_not_treated_as_values():
             ],
             "sleep_for_seconds": 300,
             "completion_recommendation": None,
-        }
+        },
+        request_for(sample_snapshot()),
     )
     proposal = DecisionProposal.model_validate(cleaned)
     assert proposal.actions[0].subject is None
@@ -125,9 +126,36 @@ def test_an_unrecognised_key_is_dropped_rather_than_failing_the_whole_answer():
             "memory_refresh": {"text": "rewritten", "through_sequence": 9},
             "invented_field": "ignore me",
             "completion_recommendation": None,
-        }
+        },
+        request_for(sample_snapshot()),
     )
     assert set(cleaned) == {"rationale", "sleep_for_seconds", "memory_refresh"}
+
+
+def test_the_version_and_context_of_a_hint_are_not_the_model_s_to_assign():
+    """Guidance stamped with the decision's own input is what makes staleness detectable."""
+    request = request_for(sample_snapshot(context_version=4))
+    cleaned = _clean(
+        {
+            "rationale": "Watching for the shipment.",
+            "sleep_for_seconds": 300,
+            "wake_hints": [
+                {
+                    "kind": "watch_for_progress",
+                    "issue_id": "refund",
+                    "event_type": "shipment_created",
+                    "review_after_seconds": None,
+                    "expires_at": "2026-09-03T09:00:00Z",
+                    "version": 99,
+                }
+            ],
+        },
+        request,
+    )
+    guidance = cleaned["wake_guidance"]
+    assert guidance["context"]["context_version"] == 4
+    assert guidance["version"] == 1
+    assert "version" not in guidance["hints"][0], "a hint carries no version of its own"
 
 
 def test_a_fenced_answer_is_read_and_a_non_object_is_refused():

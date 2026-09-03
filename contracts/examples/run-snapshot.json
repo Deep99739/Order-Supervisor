@@ -112,6 +112,24 @@
     "review_command_id": null
   },
   "recovery": null,
+  "wake_guidance": {
+    "version": 1,
+    "context": {
+      "context_version": 2,
+      "control_epoch": 0,
+      "evidence_through_sequence": 4
+    },
+    "hints": [
+      {
+        "kind": "watch_for_progress",
+        "expires_at": "2026-09-03T09:00:00Z",
+        "issue_id": "shipment-delay",
+        "event_type": "shipment_created",
+        "review_after_seconds": null
+      }
+    ],
+    "source_decision_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1"
+  },
   "committed_actions": [
     {
       "action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1/action/1",

@@ -16,9 +16,11 @@ from typing import Any
 from app.domain.actions import REGISTRY
 from app.domain.vocabulary import (
     ACTION_BATCH,
+    GUIDANCE_HINTS,
     MESSAGE_CHARS,
     SUBJECT_CHARS,
     SUMMARY_CHARS,
+    KnownEvent,
     NoteCategory,
 )
 
@@ -110,8 +112,87 @@ def _memory(cutoff: int) -> dict[str, Any]:
     )
 
 
+def _guidance(issue_ids: list[str], *, minimum: int, maximum: int) -> dict[str, Any]:
+    """The finite hint vocabulary, offered only when there is a concern to hang one on."""
+    return _nullable(
+        {
+            "type": "array",
+            "maxItems": GUIDANCE_HINTS,
+            "description": (
+                "Optional. How the cheap classifier should treat future events. A hint can "
+                "bring a review forward or let routine progress pass quietly. It cannot "
+                "grant permission, silence delivery or a delay, or override an operator."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["watch_for_progress", "shorten_review", "defer_routine"],
+                        "description": (
+                            "watch_for_progress: wake me when this event arrives while the "
+                            "issue is open. shorten_review: look again sooner while it is "
+                            "open. defer_routine: record this progress without waking me "
+                            "when nothing is unresolved."
+                        ),
+                    },
+                    "issue_id": _nullable(
+                        {
+                            "type": "string",
+                            "enum": issue_ids,
+                            "description": (
+                                "Required for watch_for_progress and shorten_review; omit "
+                                "for defer_routine."
+                            ),
+                        }
+                    ),
+                    "event_type": _nullable(
+                        {
+                            "type": "string",
+                            "enum": [str(item) for item in KnownEvent],
+                            "description": (
+                                "Required for watch_for_progress and defer_routine. Only "
+                                "ordinary progress may be deferred."
+                            ),
+                        }
+                    ),
+                    "review_after_seconds": _nullable(
+                        {
+                            "type": "integer",
+                            "minimum": minimum,
+                            "maximum": maximum,
+                            "description": "Required for shorten_review only.",
+                        }
+                    ),
+                    "expires_at": {
+                        "type": "string",
+                        "description": (
+                            "When this hint stops applying, as an ISO 8601 UTC timestamp. "
+                            "It cannot outlast the order's maximum age."
+                        ),
+                    },
+                },
+                "required": [
+                    "kind",
+                    "issue_id",
+                    "event_type",
+                    "review_after_seconds",
+                    "expires_at",
+                ],
+                "additionalProperties": False,
+            },
+        }
+    )
+
+
 def proposal_schema(
-    allowed: list[str], *, minimum: int, maximum: int, cutoff: int, offer_memory: bool
+    allowed: list[str],
+    *,
+    minimum: int,
+    maximum: int,
+    cutoff: int,
+    offer_memory: bool,
+    issue_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """The canonical strict schema, in the OpenAI `json_schema` dialect.
 
@@ -148,6 +229,8 @@ def proposal_schema(
             }
         ),
     }
+    if issue_ids:
+        properties["wake_hints"] = _guidance(issue_ids, minimum=minimum, maximum=maximum)
     if offer_memory:
         properties["memory_refresh"] = _memory(cutoff)
     return {

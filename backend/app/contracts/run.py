@@ -21,6 +21,7 @@ from app.domain.vocabulary import (
     ACTION_LEDGER,
     CLOSED_STATUS,
     EVIDENCE_REFERENCES,
+    GUIDANCE_HINTS,
     INSTRUCTION_CHARS,
     RECENT_RECORDS,
     SUMMARY_CHARS,
@@ -28,6 +29,7 @@ from app.domain.vocabulary import (
     ActionName,
     CloseReason,
     ControlKind,
+    KnownEvent,
     RunStatus,
     workflow_id,
 )
@@ -114,6 +116,45 @@ class ContextStamp(WireModel):
     context_version: Count
     control_epoch: Count
     evidence_through_sequence: Count
+
+
+class WakeHint(WireModel):
+    """One typed thing the agent asks the classifier to do next time.
+
+    A finite schema on purpose. Generated code, regular expressions, or a free-text rule
+    would all be things nobody can audit before they take effect, and the whole point of
+    a cheap deterministic classifier is that its behaviour is inspectable.
+    """
+
+    kind: Literal["watch_for_progress", "shorten_review", "defer_routine"]
+    expires_at: UTCDateTime
+    # Required for the two hints that hang off a concern; absent for defer_routine,
+    # whose condition is that nothing is open at all.
+    issue_id: Reference | None = None
+    event_type: KnownEvent | None = None
+    review_after_seconds: Annotated[int, Field(strict=True, ge=10, le=3600)] | None = None
+
+    @model_validator(mode="after")
+    def supported_hint(self):
+        if self.kind == "watch_for_progress":
+            if self.event_type is None or self.issue_id is None:
+                raise ValueError("watch_for_progress needs an event type and the issue it serves")
+        elif self.kind == "shorten_review":
+            if self.review_after_seconds is None or self.issue_id is None:
+                raise ValueError("shorten_review needs a bounded interval and an issue")
+        elif self.event_type is None or self.issue_id is not None:
+            raise ValueError("defer_routine names a routine event type and no issue")
+        return self
+
+
+class WakeGuidance(WireModel):
+    """Guidance carries the context it was written for, so it can go stale like anything
+    else the agent produces."""
+
+    version: PositiveInt
+    context: ContextStamp
+    hints: Annotated[list[WakeHint], Field(max_length=GUIDANCE_HINTS)]
+    source_decision_id: Reference | None = None
 
 
 class CustomerDraft(WireModel):
@@ -218,6 +259,8 @@ class RunSnapshot(WireModel):
     committed_actions: Annotated[list[CommittedAction], Field(max_length=ACTION_LEDGER)] = Field(
         default_factory=list
     )
+    # Defaulted so a run recorded before guidance existed still loads.
+    wake_guidance: WakeGuidance | None = None
     counters: RunCounters = Field(default_factory=RunCounters)
     final_output: FinalOutput | None = None
 

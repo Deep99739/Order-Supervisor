@@ -13,13 +13,18 @@ from app.contracts.common import (
     UTCDateTime,
     WireModel,
 )
-from app.contracts.run import ActivityDisposition, ActivityKind, ContextStamp, RunSnapshot
+from app.contracts.run import (
+    ActivityDisposition,
+    ActivityKind,
+    ContextStamp,
+    RunSnapshot,
+    WakeGuidance,
+)
 from app.domain.vocabulary import (
     ACTION_BATCH,
     SUMMARY_CHARS,
     ActionName,
     DecisionTrigger,
-    KnownEvent,
     NoteCategory,
 )
 
@@ -39,28 +44,6 @@ class ActionProposal(WireModel):
 class MemoryRefresh(WireModel):
     text: Annotated[str, StringConstraints(min_length=1, max_length=SUMMARY_CHARS)]
     through_sequence: Count
-
-
-class WakeHint(WireModel):
-    kind: Literal["watch_for_progress", "shorten_review", "await_response"]
-    issue_id: Reference
-    expires_at: UTCDateTime
-    event_type: KnownEvent | None = None
-    review_after_seconds: Annotated[int, Field(strict=True, ge=10, le=3600)] | None = None
-
-    @model_validator(mode="after")
-    def supported_hint(self):
-        if self.kind == "watch_for_progress" and self.event_type is None:
-            raise ValueError("watch_for_progress requires a known event type")
-        if self.kind == "shorten_review" and self.review_after_seconds is None:
-            raise ValueError("shorten_review requires a bounded interval")
-        return self
-
-
-class WakeGuidance(WireModel):
-    version: PositiveInt
-    context: ContextStamp
-    hints: Annotated[list[WakeHint], Field(max_length=5)]
 
 
 class EvidenceDetail(WireModel):

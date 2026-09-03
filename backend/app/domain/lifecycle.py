@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from app.contracts.decision import DecisionProposal
 from app.contracts.run import RunSnapshot
+from app.domain import guidance
 from app.domain.policy import effective_policy
 from app.domain.vocabulary import CloseReason
 
@@ -48,6 +49,12 @@ def effective_wake(
         if urgent
         else profile.default_seconds
     )
+    # The agent may ask for a shorter horizon while a concern is open. It can only bring
+    # the review forward, never push it out, and it stays inside the template's bounds.
+    shortened = guidance.shortened_review(snapshot, now=now)
+    if shortened is not None:
+        ceiling = min(ceiling, shortened)
+        fallback = min(fallback, max(shortened, profile.minimum_seconds))
     requested: float | None = None
     described = "no timing was proposed"
 

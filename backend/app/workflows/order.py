@@ -50,9 +50,10 @@ with workflow.unsafe.imports_passed_through():
         EvidenceReference,
         FinalOutput,
         RunSnapshot,
+        WakeGuidance,
     )
     from app.domain import actions as action_registry
-    from app.domain import assembly, lifecycle, memory, policy
+    from app.domain import assembly, guidance, lifecycle, memory, policy
     from app.domain import events as event_rules
     from app.domain.assembly import Assembled
     from app.domain.authorization import (
@@ -288,10 +289,16 @@ class OrderSupervisor:
         evidence = EvidenceReference(
             sequence=self._snapshot.last_sequence + 1, activity_id=event_entry_id
         )
-        outcome = event_rules.interpret(
-            self._snapshot, command, now=workflow.now(), evidence=evidence
+        now = workflow.now()
+        outcome = event_rules.interpret(self._snapshot, command, now=now, evidence=evidence)
+        carried = self._snapshot.wake_guidance
+        verdict = policy.classify(
+            outcome,
+            self._snapshot,
+            command.event_type,
+            hints=guidance.active(self._snapshot, now=now),
+            guidance_version=carried.version if carried else None,
         )
-        verdict = policy.classify(outcome, self._snapshot, command.event_type)
 
         document = self._document()
         document["facts"] = outcome.facts.model_dump(mode="json")
@@ -339,6 +346,7 @@ class OrderSupervisor:
                         "wake": verdict.wake,
                         "review_required": verdict.review_required,
                         "guidance_version": verdict.guidance_version,
+                        "guidance_hint": verdict.guidance_hint,
                     },
                 ),
             ],
@@ -1108,6 +1116,7 @@ class OrderSupervisor:
                 )
             )
 
+        self._absorb_guidance(document, proposal, reference, stamp, entries, now=now)
         candidate = self._absorb_memory(
             RunSnapshot.model_validate(document), proposal, reference, stamp, entries, now=now
         )
@@ -1126,6 +1135,79 @@ class OrderSupervisor:
             )
         )
         await self._commit(candidate, entries)
+
+    def _absorb_guidance(
+        self,
+        document: dict[str, Any],
+        proposal: Any,
+        reference: str,
+        stamp: ContextStamp,
+        entries: list[ProposedEntry],
+        *,
+        now: Any,
+    ) -> None:
+        """Adopt the hints that survive validation, and say why the others did not.
+
+        A refused hint never costs the run its existing guidance or its next deadline, so
+        each one is judged on its own and recorded on its own.
+        """
+        offered = getattr(proposal, "wake_guidance", None)
+        if offered is None:
+            return
+        review = guidance.check(offered, self._snapshot, stamp, now=now)
+        version = (self._snapshot.wake_guidance.version + 1) if self._snapshot.wake_guidance else 1
+
+        for refusal in review.refused:
+            entries.append(
+                ProposedEntry(
+                    entry_id=workflow.uuid4(),
+                    kind="policy",
+                    disposition="rejected",
+                    explanation=refusal.explanation[:500],
+                    decision_id=reference,
+                    details={
+                        "guidance_hint": refusal.hint.kind,
+                        "reason": refusal.reason,
+                        "issue_id": refusal.hint.issue_id,
+                        "event_type": refusal.hint.event_type,
+                    },
+                )
+            )
+        if not review.usable:
+            return
+
+        adopted = WakeGuidance(
+            version=version,
+            context=ContextStamp(
+                context_version=document["context_version"],
+                control_epoch=document["control_epoch"],
+                evidence_through_sequence=stamp.evidence_through_sequence,
+            ),
+            hints=list(review.accepted),
+            source_decision_id=reference,
+        )
+        document["wake_guidance"] = adopted.model_dump(mode="json")
+        entries.append(
+            ProposedEntry(
+                entry_id=workflow.uuid4(),
+                kind="policy",
+                disposition="recorded",
+                explanation=(
+                    f"Wake guidance v{version} adopted: "
+                    + "; ".join(
+                        f"{hint.kind}"
+                        + (f" for {hint.issue_id}" if hint.issue_id else "")
+                        + (f" on {hint.event_type}" if hint.event_type else "")
+                        for hint in review.accepted
+                    )
+                )[:500],
+                decision_id=reference,
+                details={
+                    "guidance_version": version,
+                    "hints": [hint.model_dump(mode="json") for hint in review.accepted],
+                },
+            )
+        )
 
     def _absorb_memory(
         self,
