@@ -133,7 +133,9 @@ async def terminate_run(
     )
 
 
-@router.post("/reviews/{draft_id}", **ACCEPTED)
+# `:path` because a draft identity is `{run_id}/draft/{n}`, following the same family as
+# every other generated identifier. Without it the slashes make the route unreachable.
+@router.post("/reviews/{draft_id:path}", **ACCEPTED)
 async def review_draft(
     run_id: UUID, draft_id: str, body: ReviewCommand, pool: Pool, client: Temporal
 ) -> CommandAcknowledgement:

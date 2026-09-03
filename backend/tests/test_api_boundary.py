@@ -177,17 +177,31 @@ async def test_instruction_shapes_and_review_targets_are_checked(api, temporal):
     )
     assert accepted.status_code == 202
 
+    # A draft identity carries slashes like every other generated identifier, so the
+    # route has to accept them rather than 404 on a real draft.
+    draft_id = f"{run_id}/draft/1"
     wrong_draft = await api.post(
-        f"/api/runs/{run_id}/reviews/draft-1",
+        f"/api/runs/{run_id}/reviews/{draft_id}",
         json={
             "command_id": str(uuid4()),
-            "draft_id": "draft-2",
+            "draft_id": f"{run_id}/draft/2",
             "content_digest": "a" * 64,
             "decision": "approve",
         },
     )
     assert wrong_draft.status_code == 422
     assert wrong_draft.json()["code"] == "review_target_mismatch"
+
+    matching = await api.post(
+        f"/api/runs/{run_id}/reviews/{draft_id}",
+        json={
+            "command_id": str(uuid4()),
+            "draft_id": draft_id,
+            "content_digest": "a" * 64,
+            "decision": "approve",
+        },
+    )
+    assert matching.status_code == 202, "a slash-bearing draft identity must be routable"
 
 
 async def test_supervisor_configurations_are_listed_versioned_and_guarded(api):
