@@ -314,11 +314,13 @@ export function absoluteTime(iso: string): string {
   });
 }
 
+/** 24-hour so every row in a timeline is the same width and sorts by eye. */
 export function clockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+    hour12: false,
   });
 }
 
