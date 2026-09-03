@@ -60,6 +60,7 @@
           {
             "audience": "logistics_team",
             "action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1/action/1",
+            "evidence_sequence": 3,
             "context_version": 2,
             "contacted_at": "2026-09-03T03:00:02Z",
             "follow_up_at": "2026-09-03T03:30:02Z"

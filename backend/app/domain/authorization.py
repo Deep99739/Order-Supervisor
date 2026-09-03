@@ -98,20 +98,30 @@ def _issue(snapshot: RunSnapshot, issue_id: str | None) -> OpenIssue | None:
     return None
 
 
+def issue_evidence_sequence(issue: OpenIssue) -> int:
+    """How far this issue's own evidence reaches. Its version, in effect."""
+    return max((reference.sequence for reference in issue.evidence), default=0)
+
+
 def _repeated_contact(
-    issue: OpenIssue, audience: ActionAudience, snapshot: RunSnapshot, now: datetime
+    issue: OpenIssue, audience: ActionAudience, now: datetime
 ) -> str | None:
-    """Block a second contact about work that has not changed since the first one."""
+    """Block a second contact about work that has not changed since the first one.
+
+    Measured against *this issue's* evidence rather than the run's overall version: a
+    customer question about something else is not news for the logistics team, and
+    treating it as news would let any passing event unlock another round of messages.
+    """
     for contact in issue.contacts:
         if contact.audience != audience:
             continue
-        if snapshot.context_version > contact.context_version:
-            return None  # Something material happened; there is genuinely more to say.
+        if issue_evidence_sequence(issue) > contact.evidence_sequence:
+            return None  # Genuinely more to say about this concern.
         if now >= contact.follow_up_at:
             return None  # The follow-up window elapsed.
         return (
             f"{audience} was already contacted about {issue.issue_id} as {contact.action_id}, "
-            f"nothing has changed since, and follow-up is not due until "
+            f"nothing new has been recorded about it since, and follow-up is not due until "
             f"{contact.follow_up_at.isoformat()}."
         )
     return None
@@ -227,7 +237,7 @@ def authorize(
             continue
 
         if issue is not None:
-            repeat = _repeated_contact(issue, definition.audience, snapshot, now)
+            repeat = _repeated_contact(issue, definition.audience, now)
             if repeat is not None:
                 refuse(BlockReason.REPEATED_CONTACT, repeat)
                 continue

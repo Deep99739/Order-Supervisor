@@ -165,6 +165,7 @@ def test_a_prior_contact_and_its_follow_up_window_are_visible():
                         {
                             "audience": "logistics_team",
                             "action_id": "run/decision/1/action/1",
+                            "evidence_sequence": 3,
                             "context_version": 0,
                             "contacted_at": RULES_NOW.isoformat(),
                             "follow_up_at": (RULES_NOW + timedelta(minutes=30)).isoformat(),

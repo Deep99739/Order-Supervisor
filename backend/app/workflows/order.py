@@ -1092,6 +1092,9 @@ class OrderSupervisor:
                 {
                     "audience": str(admitted.audience),
                     "action_id": admitted.action_id,
+                    "evidence_sequence": max(
+                        (item["sequence"] for item in issue["evidence"]), default=0
+                    ),
                     "context_version": document["context_version"],
                     "contacted_at": now.isoformat(),
                     "follow_up_at": follow_up.isoformat(),

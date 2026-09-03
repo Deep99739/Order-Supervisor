@@ -56,14 +56,25 @@ def _fenced(label: str, body: str) -> str:
 
 def _controls(snapshot: RunSnapshot) -> str:
     policy = effective_policy(snapshot)
-    lines = [
+    review = (
         f"- Customer contact requires human approval: {yes_no(policy.require_customer_review)}"
-        + (
-            " (because instructions were added whose stance on customer contact is"
-            " unstated — the safe reading is chosen until an operator says otherwise)"
-            if policy.review_from_ambiguity
-            else ""
-        ),
+    )
+    if policy.require_customer_review:
+        # Without this the model routes customer-facing text into an internal note to
+        # work around the gate, and the person who should see the draft never does.
+        review += (
+            " — still propose message_customer when the customer needs to hear something."
+            " The system turns it into a draft for a person to approve and sends nothing"
+            " by itself. Do not put customer-facing wording into an internal note instead."
+        )
+    if policy.review_from_ambiguity:
+        review += (
+            " Approval is required because instructions were added whose stance on"
+            " customer contact is unstated, and the safe reading is chosen until an"
+            " operator says otherwise."
+        )
+    lines = [
+        review,
         f"- Shipment delays escalate immediately: {yes_no(policy.escalate_shipment_delays)}",
         f"- Speed is prioritised over cost: {yes_no(policy.prioritize_speed)}",
     ]

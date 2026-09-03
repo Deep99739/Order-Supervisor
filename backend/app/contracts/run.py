@@ -39,11 +39,16 @@ class EvidenceReference(WireModel):
 
 
 class IssueContact(WireModel):
-    """One committed contact about one issue. Deciding whether to write again needs the
-    audience, what was known at the time, and when a follow-up becomes fair."""
+    """One committed contact about one issue.
+
+    `evidence_sequence` is how far this issue's own evidence had reached when the message
+    went out. That, and not the run's overall version, is what decides whether there is
+    genuinely something new to say to the same audience.
+    """
 
     audience: ActionAudience
     action_id: Reference
+    evidence_sequence: Count
     context_version: Count
     contacted_at: UTCDateTime
     follow_up_at: UTCDateTime

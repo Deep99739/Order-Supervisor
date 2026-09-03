@@ -67,11 +67,12 @@ def logistics(**fields) -> ActionProposal:
     return action(ActionName.MESSAGE_LOGISTICS_TEAM, **values)
 
 
-def contact(snapshot, *, audience=ActionAudience.LOGISTICS_TEAM, version=None, ago=timedelta()):
+def contact(snapshot, *, audience=ActionAudience.LOGISTICS_TEAM, evidence=3, ago=timedelta()):
     return {
         "audience": str(audience),
         "action_id": f"{DECISION}/action/1",
-        "context_version": snapshot.context_version if version is None else version,
+        "evidence_sequence": evidence,
+        "context_version": snapshot.context_version,
         "contacted_at": (RULES_NOW - ago).isoformat(),
         "follow_up_at": (RULES_NOW - ago + follow_up_interval(snapshot)).isoformat(),
     }
@@ -181,10 +182,17 @@ def test_asking_the_same_team_again_about_unchanged_work_is_suppressed():
     assert "follow-up is not due" in outcome.blocked[0].explanation
 
 
-def test_a_material_update_justifies_writing_again():
-    base = with_issue(context_version=4)
-    snapshot = with_issue(context_version=4, contacts=[contact(base, version=3)])
+def test_newer_evidence_on_the_same_concern_justifies_writing_again():
+    base = with_issue()
+    snapshot = with_issue(contacts=[contact(base, evidence=2)])
     assert run(snapshot, proposal(logistics())).admitted
+
+
+def test_an_unrelated_event_does_not_unlock_another_message():
+    """The run moving on is not news for this audience about this concern."""
+    base = with_issue()
+    snapshot = with_issue(context_version=9, contacts=[contact(base)])
+    assert run(snapshot, proposal(logistics())).blocked[0].reason is BlockReason.REPEATED_CONTACT
 
 
 def test_the_follow_up_window_elapsing_justifies_writing_again():

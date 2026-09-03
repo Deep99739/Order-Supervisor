@@ -140,9 +140,12 @@ export const ACTION_AUDIENCE: Record<ActionName, ActionAudience> = {
 
 export type NoteCategory = "observation" | "escalation" | "recommendation";
 
+// `evidence_sequence` is how far this issue's own evidence reached when the message went
+// out — the test for whether there is anything new to say to the same audience.
 export interface IssueContact {
   audience: ActionAudience;
   action_id: string;
+  evidence_sequence: number;
   context_version: number;
   contacted_at: UTCDateTime;
   follow_up_at: UTCDateTime;
