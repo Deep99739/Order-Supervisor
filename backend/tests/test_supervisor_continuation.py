@@ -124,12 +124,14 @@ async def test_a_paused_run_rolls_over_and_stays_paused(pool):
         assert rolled.memory.text
         assert rolled.maximum_age_at == paused.maximum_age_at
 
-        # And it resumes normally afterwards.
+        # And it resumes normally afterwards, on whichever execution it is up to by then.
         await run.send_control("resume")
         resumed = await run.until(
             lambda state: state.status == RunStatus.SLEEPING, note="the run to resume"
         )
-        assert resumed.execution_generation == rolled.execution_generation
+        assert resumed.execution_generation >= rolled.execution_generation
+        assert resumed.run_id == rolled.run_id
+        assert resumed.maximum_age_at == paused.maximum_age_at
 
 
 async def test_a_quiet_execution_does_not_continue_again_on_its_own(pool):
