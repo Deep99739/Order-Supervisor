@@ -9,11 +9,12 @@ from uuid import uuid4
 
 import pytest
 
-from app.contracts.decision import DecisionProposal
+from app.contracts.decision import ActionProposal, DecisionProposal
+from app.contracts.report import ReportNarrative
 from app.contracts.supervisor import SupervisorConfig
 from app.domain import events as event_rules
 from app.domain.presets import PRESETS
-from app.domain.vocabulary import RunStatus
+from app.domain.vocabulary import ActionName, RunStatus
 from tests.harness import supervised
 
 pytestmark = pytest.mark.integration
@@ -175,3 +176,133 @@ async def test_a_failing_review_holds_the_run_for_recovery(pool):
             lambda state: state.status == RunStatus.SLEEPING, note="recovery to complete"
         )
         assert recovered.recovery is None
+
+
+# --- T13: the report is built from receipts, and the narrative is optional ----------------
+
+
+def chase_logistics() -> DecisionProposal:
+    return DecisionProposal(
+        rationale="Chasing the open delay with logistics.",
+        actions=[
+            ActionProposal(
+                action=ActionName.MESSAGE_LOGISTICS_TEAM,
+                subject="Delayed order",
+                content="Please confirm a revised delivery date for this shipment.",
+                issue_id=event_rules.SHIPMENT_DELAY_ISSUE,
+                rationale="The delay is open and logistics owns it.",
+            )
+        ],
+        sleep_for_seconds=60,
+    )
+
+
+async def a_run_with_one_receipt(run):
+    """Get one committed action onto the record, then stop proposing."""
+    await settled(run)
+    run.decisions.proposal = chase_logistics()
+    await run.send_event("shipment_delayed", {"reason": "Hub backlog"})
+    await run.until(lambda state: state.counters.committed_actions == 1)
+    run.decisions.proposal = DecisionProposal(
+        rationale="Nothing further is needed.", sleep_for_seconds=300
+    )
+
+
+async def test_the_report_lists_receipts_read_back_from_the_record(pool):
+    """The snapshot carries a bounded ledger; the report reads the log itself."""
+    async with supervised(pool, order_id="ORD-CLOSE-RECEIPTS") as run:
+        await a_run_with_one_receipt(run)
+        await run.send_control("terminate", "Enough for now")
+        snapshot = await run.until(lambda state: state.status == RunStatus.TERMINATED)
+
+        report = snapshot.final_output
+        assert report is not None
+        assert [item.action for item in report.important_actions] == [
+            ActionName.MESSAGE_LOGISTICS_TEAM
+        ]
+        # Every listed action points at a row that exists in the log.
+        receipts = {record.sequence for record in await run.history()}
+        assert all(item.receipt.sequence in receipts for item in report.important_actions)
+        # The cutoff is frozen before the closing transition writes its own entries, so
+        # it sits below the final sequence and still covers every receipt it lists.
+        assert report.evidence_through_sequence < snapshot.last_sequence
+        assert all(
+            item.receipt.sequence <= report.evidence_through_sequence
+            for item in report.important_actions
+        )
+
+
+async def test_a_failed_narrative_still_saves_the_factual_report(pool):
+    async with supervised(pool, order_id="ORD-CLOSE-NARRATIVE-FAILS") as run:
+        await settled(run)
+        run.reports.fail_with = "The provider refused the reporting request."
+
+        await run.send_control("terminate", "Closing with reporting broken")
+        snapshot = await run.until(lambda state: state.status == RunStatus.TERMINATED)
+
+        report = snapshot.final_output
+        assert report is not None, "a delivered report is not optional because prose failed"
+        assert report.narrative_provenance == "factual_fallback"
+        assert report.learnings and report.feedback
+        assert snapshot.counters.report_attempts == 1
+
+        refused = [
+            record
+            for record in await run.entries("finalization")
+            if record.details.get("stage") == "narrative"
+        ]
+        assert refused and refused[0].disposition == "rejected"
+        assert "reporting request" in refused[0].explanation
+
+
+async def test_an_accepted_narrative_changes_the_prose_and_nothing_else(pool):
+    async with supervised(pool, order_id="ORD-CLOSE-NARRATIVE-OK") as run:
+        await a_run_with_one_receipt(run)
+        run.reports.narrative = ReportNarrative(
+            summary=(
+                "Supervision ended at the operator's request. A message to the logistics "
+                "team was recorded about the open delay."
+            ),
+            learnings=["The delay needed chasing before anything moved."],
+            feedback=["Confirm the revised date before this order is closed for good."],
+        )
+
+        await run.send_control("terminate", "Closing after the follow-up")
+        snapshot = await run.until(lambda state: state.status == RunStatus.TERMINATED)
+
+        report = snapshot.final_output
+        assert report.narrative_provenance == "model_assisted"
+        assert "operator's request" in report.summary
+        assert "scripted:test-model" in report.narrative_limitation
+        # The facts stayed the workflow's.
+        assert report.close_reason == "manually_terminated"
+        assert len(report.important_actions) == 1
+        assert snapshot.counters.report_attempts == 1
+
+        adopted = [
+            record
+            for record in await run.entries("finalization")
+            if record.details.get("stage") == "narrative"
+        ]
+        assert adopted and adopted[0].disposition == "recorded"
+
+        # The reporting call saw the receipts, not a summary of them.
+        assert run.reports.calls == 1
+        request = run.reports.requests[0]
+        assert [item.action for item in request.committed] == [
+            ActionName.MESSAGE_LOGISTICS_TEAM
+        ]
+        assert request.close_reason == "manually_terminated"
+
+
+async def test_reporting_is_not_counted_as_an_order_decision(pool):
+    async with supervised(pool, order_id="ORD-CLOSE-REPORT-BUDGET") as run:
+        snapshot = await settled(run)
+        episodes = snapshot.counters.decisions
+
+        await run.send_control("terminate", "Closing")
+        closed = await run.until(lambda state: state.status == RunStatus.TERMINATED)
+
+        # The closing call has its own budget and does not inflate the run's reasoning.
+        assert closed.counters.decisions == episodes
+        assert closed.counters.model_attempts == snapshot.counters.model_attempts
