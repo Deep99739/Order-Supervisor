@@ -10,6 +10,23 @@ import { useEffect } from "react";
  * The first read is scheduled by this loop too, so a screen has exactly one owner of its
  * data rather than an initial fetch racing a poll.
  */
+/**
+ * One read on mount, scheduled rather than executed inside the effect so the render pass
+ * itself never triggers state updates.
+ */
+export function useOnce(read: () => Promise<void>): void {
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (!cancelled) void read();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [read]);
+}
+
 export function usePoller(
   read: () => Promise<void>,
   intervalMs: number,

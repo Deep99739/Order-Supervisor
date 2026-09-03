@@ -365,7 +365,7 @@ export function countdown(targetIso: string, now: number): string {
 export function durationLabel(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-  if (seconds < 86400) {
+  if (seconds < 172800) {
     const hours = seconds / 3600;
     return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} h`;
   }
