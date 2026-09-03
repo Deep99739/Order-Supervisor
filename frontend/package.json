@@ -11,6 +11,7 @@
     "dev": "next dev --webpack --hostname localhost --port 3000",
     "build": "next build --webpack",
     "check:contracts": "node scripts/check-contracts.mjs",
+    "check:display": "node scripts/check-display.mjs",
     "start": "next start --hostname localhost --port 3000",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "next typegen && tsc --noEmit"

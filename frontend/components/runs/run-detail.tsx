@@ -154,6 +154,11 @@ export function RunDetail({ runId }: { runId: string }) {
               >
                 <RefreshCw className="size-4" aria-hidden="true" />
               </Button>
+              {closed ? (
+                <p className="w-full text-[13px] text-muted-foreground sm:w-auto sm:basis-full sm:text-right">
+                  {closedReason}
+                </p>
+              ) : null}
             </div>
           </div>
 
