@@ -14,7 +14,7 @@ from pydantic import SecretStr
 
 from app.activities.decision import _clean
 from app.agent.prompt import CLOSURE_CAUSE, INVARIANTS, decision_prompt, report_prompt
-from app.agent.providers import ProviderError, build_provider, parse_json
+from app.agent.providers import ProviderError, build_provider, parse_json, rotate
 from app.agent.schema import proposal_schema, to_openapi
 from app.config import discover_api_keys
 from app.contracts.decision import ContextStamp, DecisionProposal, DecisionRequest
@@ -292,3 +292,27 @@ def test_every_closure_cause_is_stated_in_words():
     assert "an operator ended supervision from the console" in prompt
     # The model is still told the decision is not its to revisit.
     assert "you cannot change it" in prompt
+
+
+def test_the_key_window_moves_so_one_account_is_not_hammered():
+    """Keys can come from separate accounts, and a per-minute token budget is enforced
+    per account. Always starting at the first key spends one budget and leaves the rest
+    idle, which is what produced repeated rate limits during a demonstration."""
+    keys = tuple(SecretStr(f"k{i}") for i in range(1, 6))
+    shown = [
+        [k.get_secret_value() for k in rotate(keys, start=start, window=3)]
+        for start in range(5)
+    ]
+
+    assert shown[0] == ["k1", "k2", "k3"]
+    assert shown[1] == ["k2", "k3", "k4"]
+    # The window wraps rather than running short at the end.
+    assert shown[3] == ["k4", "k5", "k1"]
+    assert all(len(window) == 3 for window in shown)
+
+    # Over one cycle every configured key gets a turn at the front.
+    assert {window[0] for window in shown} == {"k1", "k2", "k3", "k4", "k5"}
+
+    # Fewer keys than the window is not an error; it just tries what there is.
+    assert len(rotate(keys[:2], start=7, window=3)) == 2
+    assert rotate((), start=3, window=3) == ()

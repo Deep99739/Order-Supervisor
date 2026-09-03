@@ -11,10 +11,18 @@ budget — SDK retries are disabled for the activity. Separately, a request the 
 *refused* (rate limit, transient outage) produces no answer at all, so it may be reissued
 against the next configured key. That rotation is bounded and counted, and it never buys
 a third opinion.
+
+Which keys those are rotates. Each call starts its window at a different configured key
+and wraps around, so several keys share the load instead of the first one absorbing every
+first attempt. Where keys belong to separate accounts that matters a lot: a per-minute
+token budget is enforced per account, so *n* keys from *n* accounts really are *n*
+budgets, and always starting at the first one throws that away. Keys from one account
+share a budget and rotation simply costs nothing.
 """
 
 import json
 from dataclasses import dataclass, field
+from itertools import count
 from typing import Any
 
 import httpx
@@ -23,6 +31,20 @@ from pydantic import SecretStr
 from app.domain.vocabulary import PROVIDER_KEYS_PER_ATTEMPT, PROVIDER_TIMEOUT_SECONDS
 
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
+
+# Where the next call's key window starts. Process-local and deliberately not carried in
+# workflow state: this is an activity-side detail, and which key answered is recorded on
+# the reply rather than decided in advance.
+_ROTATION = count()
+
+
+def rotate(keys: tuple[SecretStr, ...], *, start: int, window: int) -> tuple[SecretStr, ...]:
+    """The keys one call may try, beginning at `start` and wrapping around."""
+    if not keys:
+        return ()
+    offset = start % len(keys)
+    ordered = keys[offset:] + keys[:offset]
+    return ordered[:window]
 
 
 class ProviderError(Exception):
@@ -85,7 +107,7 @@ class Provider:
 
     async def complete(self, *, system: str, user: str, schema: dict) -> ProviderReply:
         last: ProviderError | None = None
-        usable = self.keys[:PROVIDER_KEYS_PER_ATTEMPT]
+        usable = rotate(self.keys, start=next(_ROTATION), window=PROVIDER_KEYS_PER_ATTEMPT)
         async with httpx.AsyncClient(timeout=PROVIDER_TIMEOUT_SECONDS) as client:
             for index, key in enumerate(usable, start=1):
                 call = self._request(key, system, user, schema)
