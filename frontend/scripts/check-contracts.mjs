@@ -5,15 +5,28 @@ import ts from "typescript";
 
 const root = process.cwd();
 const source = fs.readFileSync(path.join(root, "lib/contracts.ts"), "utf8");
-const fixture = JSON.parse(
-  fs.readFileSync(
-    path.join(root, "../contracts/examples/run-snapshot.json"),
-    "utf8",
+// Both fixtures are produced by the Pydantic models, so a mismatch here means the
+// TypeScript mirror has drifted from the validation authority — not that the data is odd.
+// The closed run carries a final report, which the open one cannot.
+const FIXTURES = ["run-snapshot", "closed-run-snapshot"];
+const fixtures = FIXTURES.map((name) =>
+  JSON.parse(
+    fs.readFileSync(
+      path.join(root, `../contracts/examples/${name}.json`),
+      "utf8",
+    ),
   ),
 );
 const virtual = path.join(root, "lib/__contract-check.ts");
 const sourceFile = path.join(root, "lib/contracts.ts");
-const check = `import type { RunSnapshot } from "./contracts";\nconst fixture = ${JSON.stringify(fixture)} as const satisfies RunSnapshot;\nvoid fixture;\n`;
+const check =
+  `import type { RunSnapshot } from "./contracts";\n` +
+  fixtures
+    .map(
+      (fixture, index) =>
+        `const fixture${index} = ${JSON.stringify(fixture)} as const satisfies RunSnapshot;\nvoid fixture${index};\n`,
+    )
+    .join("");
 
 const options = {
   strict: true,
@@ -56,5 +69,5 @@ if (diagnostics.length) {
   process.exit(1);
 }
 console.log(
-  "PASS synthetic RunSnapshot satisfies the TypeScript contract mirror",
+  `PASS ${FIXTURES.length} synthetic snapshots satisfy the TypeScript contract mirror`,
 );

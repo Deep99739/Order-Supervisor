@@ -48,12 +48,11 @@ with workflow.unsafe.imports_passed_through():
         ContextStamp,
         CustomerDraft,
         EvidenceReference,
-        FinalOutput,
         RunSnapshot,
         WakeGuidance,
     )
     from app.domain import actions as action_registry
-    from app.domain import assembly, guidance, lifecycle, memory, policy
+    from app.domain import assembly, guidance, lifecycle, memory, policy, reporting
     from app.domain import events as event_rules
     from app.domain.assembly import Assembled
     from app.domain.authorization import (
@@ -1655,7 +1654,14 @@ class OrderSupervisor:
             )
         await self._commit(RunSnapshot.model_validate(finalizing), entries)
 
-        final = _final_output(self._snapshot, reason, now, abandoned)
+        final = reporting.factual(
+            self._snapshot,
+            reason,
+            now=now,
+            committed=list(self._snapshot.committed_actions),
+            refused=[],
+            abandoned=abandoned,
+        )
         closed = self._document()
         closed["status"] = str(CLOSED_STATUS[reason])
         closed["close_reason"] = str(reason)
@@ -1846,83 +1852,3 @@ def _unresolved_evidence(facts: Any) -> list[dict[str, Any]]:
 def _readable(error: Exception) -> str:
     cause = getattr(error, "cause", None)
     return str(cause) if cause else str(error)
-
-
-def _final_output(
-    snapshot: RunSnapshot,
-    reason: CloseReason,
-    now: Any,
-    abandoned: CustomerDraft | None = None,
-) -> FinalOutput:
-    """A factual closing record built only from what was actually recorded.
-
-    Every action listed here has a receipt. Nothing the agent merely proposed appears,
-    and a concern that was never settled is reported as still open.
-    """
-    facts = snapshot.facts
-    counters = snapshot.counters
-    ended = {
-        CloseReason.DELIVERED: "Delivery was recorded.",
-        CloseReason.MANUALLY_TERMINATED: "An operator ended supervision.",
-        CloseReason.MAXIMUM_AGE_REACHED: "The order reached its original maximum age.",
-    }[reason]
-    unresolved = list(facts.open_issues)
-    actions = list(snapshot.committed_actions)
-
-    summary = (
-        f"{ended} Payment is {facts.payment} and shipment is {facts.shipment}. "
-        f"{len(actions)} simulated action(s) were recorded and "
-        f"{len(unresolved)} concern(s) remain unresolved."
-    )
-    learnings = [
-        f"{counters.unique_events} order event(s) were admitted across "
-        f"{counters.decisions} review episode(s).",
-        f"{counters.deferred_events} event(s) were recorded without waking the agent.",
-    ]
-    if counters.duplicate_events:
-        learnings.append(f"{counters.duplicate_events} duplicate delivery(ies) were ignored.")
-    if counters.committed_actions:
-        audiences = sorted({str(action_registry.audience_of(item.action)) for item in actions})
-        learnings.append(
-            f"{counters.committed_actions} action(s) were recorded, reaching: "
-            f"{', '.join(audiences)}."
-        )
-    else:
-        learnings.append("No business action was needed or authorised during this run.")
-    if unresolved:
-        learnings.append(
-            "Unresolved at closure: " + ", ".join(issue.issue_id for issue in unresolved)
-        )
-
-    feedback = ["Every recorded action is a simulation; nothing was sent outside this system."]
-    if unresolved:
-        feedback.append("The unresolved concerns above need human follow-up.")
-    contacted = [issue for issue in unresolved if issue.contacts]
-    if contacted:
-        feedback.append(
-            "Already chased without resolution: "
-            + ", ".join(issue.issue_id for issue in contacted)
-            + ". A different audience or a person may be needed."
-        )
-    if abandoned is not None:
-        feedback.append(
-            f"A customer draft ({abandoned.draft_id}) was still {abandoned.status} when the "
-            "run closed, so the customer was never written to about it."
-        )
-
-    return FinalOutput(
-        close_reason=reason,
-        closed_at=now,
-        facts=facts,
-        summary=summary[:2000],
-        important_actions=actions,
-        unresolved_issues=unresolved,
-        learnings=[item[:500] for item in learnings][:10],
-        feedback=[item[:500] for item in feedback][:10],
-        narrative_provenance="factual_fallback",
-        narrative_limitation=(
-            "These are counts and facts from the record. A model-written closing "
-            "narrative arrives with the reporting work."
-        ),
-        evidence_through_sequence=snapshot.last_sequence,
-    )

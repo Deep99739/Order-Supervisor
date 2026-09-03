@@ -236,6 +236,8 @@ export interface RunCounters {
   committed_actions: number;
   compactions: number;
   continuations: number;
+  // Reporting has its own budget; its provider calls are not decision attempts.
+  report_attempts: number;
 }
 
 export interface CommittedAction {
@@ -247,16 +249,31 @@ export interface CommittedAction {
   simulated: true;
 }
 
+// A proposal that did not become an effect. `executed` is fixed false because that is
+// the whole point of the record: what the agent wanted, and why it was not permitted.
+export interface RefusedAction {
+  action: ActionName;
+  reason: BlockReason;
+  explanation: string;
+  sequence: number;
+  recorded_at: UTCDateTime;
+  executed: false;
+}
+
+// The model may write `summary`, `learnings`, and `feedback` from this evidence; it can
+// never edit the closure reason, the facts, the receipts, or the unresolved list.
+// `model_assisted`, not `model`, for exactly that reason.
 export interface FinalOutput {
   close_reason: CloseReason;
   closed_at: UTCDateTime;
   facts: OrderFacts;
   summary: string;
   important_actions: CommittedAction[];
+  blocked_actions: RefusedAction[];
   unresolved_issues: OpenIssue[];
   learnings: string[];
   feedback: string[];
-  narrative_provenance: "model" | "factual_fallback";
+  narrative_provenance: "model_assisted" | "factual_fallback";
   narrative_limitation: string | null;
   evidence_through_sequence: number;
 }

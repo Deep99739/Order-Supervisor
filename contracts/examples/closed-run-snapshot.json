@@ -31,9 +31,9 @@
     "customer_display_name": "Example customer",
     "description": "Synthetic contract fixture"
   },
-  "status": "sleeping",
+  "status": "completed",
   "pending_control": null,
-  "close_reason": null,
+  "close_reason": "delivered",
   "facts": {
     "payment": "unknown",
     "payment_attempt_reference": null,
@@ -74,7 +74,7 @@
   "recorded_revision": 4,
   "context_version": 2,
   "control_epoch": 0,
-  "last_sequence": 6,
+  "last_sequence": 41,
   "instructions": [],
   "memory": {
     "text": "Order EXAMPLE-1042 under Standard order care. Payment state is not yet known; shipment delayed. Open work \u2014 shipment-delay: Shipment delayed: hub backlog.",
@@ -88,48 +88,15 @@
   "unresolved_evidence": [],
   "deferred_evidence": [],
   "last_decision_through_sequence": 0,
-  "next_wake_at": "2026-09-03T03:05:00Z",
-  "wake_reason": "Waiting for shipment progress",
+  "next_wake_at": null,
+  "wake_reason": null,
   "started_at": "2026-09-03T03:00:00Z",
   "maximum_age_at": "2026-09-04T03:00:00Z",
   "updated_at": "2026-09-03T03:00:02Z",
-  "closed_at": null,
+  "closed_at": "2026-09-03T03:22:00Z",
   "execution_generation": 0,
-  "pending_review": {
-    "draft_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/draft/1",
-    "decision_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1",
-    "action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1/action/2",
-    "issue_id": "shipment-delay",
-    "content": "Your order is delayed at the carrier hub. We have asked logistics for a revised date and will write again as soon as we have one.",
-    "content_digest": "3d2f1b8c4a6e5079bfc1d2e3a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7",
-    "reason": "This run requires human review before the customer is contacted.",
-    "context": {
-      "context_version": 2,
-      "control_epoch": 0,
-      "evidence_through_sequence": 6
-    },
-    "status": "pending",
-    "review_command_id": null
-  },
+  "pending_review": null,
   "recovery": null,
-  "wake_guidance": {
-    "version": 1,
-    "context": {
-      "context_version": 2,
-      "control_epoch": 0,
-      "evidence_through_sequence": 4
-    },
-    "hints": [
-      {
-        "kind": "watch_for_progress",
-        "expires_at": "2026-09-03T09:00:00Z",
-        "issue_id": "shipment-delay",
-        "event_type": "shipment_created",
-        "review_after_seconds": null
-      }
-    ],
-    "source_decision_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1"
-  },
   "committed_actions": [
     {
       "action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1/action/1",
@@ -143,6 +110,7 @@
       "simulated": true
     }
   ],
+  "wake_guidance": null,
   "counters": {
     "unique_events": 2,
     "duplicate_events": 0,
@@ -154,5 +122,56 @@
     "continuations": 0,
     "report_attempts": 0
   },
-  "final_output": null
+  "final_output": {
+    "close_reason": "delivered",
+    "closed_at": "2026-09-03T03:22:00Z",
+    "facts": {
+      "payment": "unknown",
+      "payment_attempt_reference": null,
+      "payment_observed_at": null,
+      "shipment": "delivered",
+      "shipment_reference": null,
+      "shipment_observed_at": null,
+      "expected_at": null,
+      "delivered_at": null,
+      "delivery_evidence_reference": null,
+      "last_relevant_progress_at": "2026-09-03T02:58:00Z",
+      "open_issues": []
+    },
+    "summary": "Delivery was recorded and supervision closed under the delivery rule. The carrier backlog was chased with logistics once; nothing was left open.",
+    "important_actions": [
+      {
+        "action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/2/action/1",
+        "action": "message_logistics_team",
+        "content": "Please confirm a revised delivery estimate for SHP-4410.",
+        "receipt": {
+          "sequence": 16,
+          "activity_id": "0d4b6b52-6a52-4c1d-95f4-1f4e6a3d9c12"
+        },
+        "recorded_at": "2026-09-03T02:46:00Z",
+        "simulated": true
+      }
+    ],
+    "blocked_actions": [
+      {
+        "action": "message_logistics_team",
+        "reason": "repeated_contact",
+        "explanation": "logistics_team was already contacted about shipment-delay and nothing new has been recorded about it since.",
+        "sequence": 24,
+        "recorded_at": "2026-09-03T02:54:00Z",
+        "executed": false
+      }
+    ],
+    "unresolved_issues": [],
+    "learnings": [
+      "4 order event(s) were admitted across 3 review episode(s).",
+      "1 event(s) were recorded without waking the agent."
+    ],
+    "feedback": [
+      "Every recorded action is a simulation; nothing was sent outside this system."
+    ],
+    "narrative_provenance": "model_assisted",
+    "narrative_limitation": "Closing text written by groq:openai/gpt-oss-120b from the recorded facts. The facts, receipts, and unresolved list above are not its to change.",
+    "evidence_through_sequence": 41
+  }
 }

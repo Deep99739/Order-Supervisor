@@ -27,6 +27,7 @@ from app.domain.vocabulary import (
     SUMMARY_CHARS,
     ActionAudience,
     ActionName,
+    BlockReason,
     CloseReason,
     ControlKind,
     KnownEvent,
@@ -191,6 +192,9 @@ class RunCounters(WireModel):
     committed_actions: Count = 0
     compactions: Count = 0
     continuations: Count = 0
+    # Reporting has its own budget and is not an order-decision episode, so its provider
+    # calls are counted apart from `model_attempts`. Defaulted for runs recorded before it.
+    report_attempts: Count = 0
 
 
 class CommittedAction(WireModel):
@@ -202,16 +206,45 @@ class CommittedAction(WireModel):
     simulated: Literal[True] = True
 
 
+class RefusedAction(WireModel):
+    """A proposal that did not become an effect, kept separate from work that did.
+
+    `executed` is fixed false because that is the whole point of this record: it names
+    something the agent wanted to do and the reason it was not permitted.
+    """
+
+    action: ActionName
+    reason: BlockReason
+    explanation: ShortText
+    sequence: Count
+    recorded_at: UTCDateTime
+    executed: Literal[False] = False
+
+
 class FinalOutput(WireModel):
+    """The closing record. Every factual field here comes from what was recorded.
+
+    A model may write `summary`, `learnings`, and `feedback` from this evidence, and
+    `narrative_provenance` says whether one did. It can never edit the closure reason,
+    the facts, the receipts, or the unresolved list — which is why those are separate
+    fields rather than sentences in the summary.
+    """
+
     close_reason: CloseReason
     closed_at: UTCDateTime
     facts: OrderFacts
     summary: Message
     important_actions: Annotated[list[CommittedAction], Field(max_length=128)]
+    # Proposals that were refused or are still awaiting approval. Defaulted so a report
+    # written before this section existed still loads.
+    blocked_actions: Annotated[list[RefusedAction], Field(max_length=64)] = Field(
+        default_factory=list
+    )
     unresolved_issues: Annotated[list[OpenIssue], Field(max_length=EVIDENCE_REFERENCES)]
     learnings: Annotated[list[ShortText], Field(max_length=10)]
     feedback: Annotated[list[ShortText], Field(max_length=10)]
-    narrative_provenance: Literal["model", "factual_fallback"]
+    # `model_assisted`, not `model`: the agent supplies prose over facts it cannot change.
+    narrative_provenance: Literal["model_assisted", "factual_fallback"]
     narrative_limitation: ShortText | None = None
     evidence_through_sequence: Count
 
