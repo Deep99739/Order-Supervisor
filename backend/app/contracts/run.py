@@ -48,7 +48,10 @@ class IssueContact(WireModel):
 
     audience: ActionAudience
     action_id: Reference
-    evidence_sequence: Count
+    # Defaulted so a run recorded before this field existed still loads. Zero means "no
+    # known evidence position", which errs towards allowing one more message rather than
+    # silencing a concern forever; the follow-up window still applies either way.
+    evidence_sequence: Count = 0
     context_version: Count
     contacted_at: UTCDateTime
     follow_up_at: UTCDateTime

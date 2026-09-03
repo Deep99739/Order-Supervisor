@@ -208,6 +208,17 @@ def test_suppression_is_specific_to_the_audience_that_was_contacted():
     assert run(snapshot, proposal(logistics())).admitted, "logistics has not been told"
 
 
+def test_a_contact_recorded_before_evidence_was_tracked_still_loads():
+    """A required field added to a nested snapshot model makes every stored run
+    unreadable, which surfaces as a 500 on an ordinary read. Zero is this field's
+    honest default: no known evidence position."""
+    base = with_issue()
+    legacy = dict(contact(base))
+    legacy.pop("evidence_sequence")
+    snapshot = with_issue(contacts=[legacy])
+    assert snapshot.facts.open_issues[0].contacts[0].evidence_sequence == 0
+
+
 def test_the_follow_up_interval_follows_the_template_rhythm():
     quick = with_issue(supervisor=PRESETS[1])
     assert follow_up_interval(quick) < follow_up_interval(with_issue())
