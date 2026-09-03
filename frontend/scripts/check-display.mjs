@@ -256,6 +256,38 @@ check("a passed deadline counts down to zero, never below it", () => {
   assert.equal(display.untilTime("2026-09-03T00:09:00Z", now), "due");
 });
 
+// --------------------------------------------------------------- wake guidance
+
+check("a hint the run has stopped honouring is not shown as if it still applied", () => {
+  const now = Date.parse("2026-09-03T00:10:00Z");
+  const hint = {
+    kind: "watch_for_progress",
+    expires_at: "2026-09-03T02:00:00Z",
+    issue_id: "payment",
+    event_type: "payment_confirmed",
+    review_after_seconds: null,
+  };
+  const base = {
+    control_epoch: 1,
+    facts: { open_issues: [{ issue_id: "payment" }] },
+    wake_guidance: { version: 1, context: { control_epoch: 1 }, hints: [hint] },
+  };
+
+  assert.equal(policy.hintStatus(base, hint, now).applies, true, "an open concern keeps it");
+
+  const settled = { ...base, facts: { open_issues: [] } };
+  assert.equal(policy.hintStatus(settled, hint, now).applies, false);
+  assert.match(policy.hintStatus(settled, hint, now).why, /settled/);
+
+  const expired = { ...hint, expires_at: "2026-09-03T00:09:00Z" };
+  assert.equal(policy.hintStatus(base, expired, now).applies, false);
+  assert.match(policy.hintStatus(base, expired, now).why, /expired/);
+
+  const moved = { ...base, control_epoch: 2 };
+  assert.equal(policy.hintStatus(moved, hint, now).applies, false);
+  assert.match(policy.hintStatus(moved, hint, now).why, /operator boundary/);
+});
+
 console.log(
   failures === 0
     ? "\nPASS display rules"

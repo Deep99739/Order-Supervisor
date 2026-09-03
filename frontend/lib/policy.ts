@@ -10,7 +10,12 @@
  *
  * If the Python rule changes, change this with it.
  */
-import type { ActiveInstruction, SupervisorConfig } from "./contracts";
+import type {
+  ActiveInstruction,
+  SupervisorConfig,
+  WakeGuidance,
+  WakeHint,
+} from "./contracts";
 
 export type EffectivePolicy = {
   prioritizeSpeed: boolean;
@@ -63,4 +68,40 @@ export function effectivePolicy(run: {
     requireCustomerReview: review || ambiguous,
     reviewFromAmbiguity: ambiguous,
   };
+}
+
+/**
+ * A read-only mirror of `backend/app/domain/guidance.py::active`.
+ *
+ * The run keeps every hint it ever adopted, and simply stops honouring the ones that no
+ * longer apply — nothing withdraws them. Rendering the stored list as though all of it
+ * were in force would have the console assert a wake rule the runtime is ignoring, which
+ * is the one thing this interface is not allowed to do.
+ *
+ * If the Python rule changes, change this with it.
+ */
+export function hintStatus(
+  run: {
+    control_epoch: number;
+    facts: { open_issues: { issue_id: string }[] };
+    wake_guidance: WakeGuidance | null;
+  },
+  hint: WakeHint,
+  /** Epoch milliseconds from the clock aligned to the API's own `observed_at`. */
+  now: number,
+): { applies: boolean; why: string } {
+  if (!run.wake_guidance) return { applies: false, why: "no guidance is recorded" };
+  if (run.wake_guidance.context.control_epoch !== run.control_epoch) {
+    return { applies: false, why: "an operator boundary moved after it was written" };
+  }
+  if (Date.parse(hint.expires_at) <= now) {
+    return { applies: false, why: "it has expired" };
+  }
+  if (
+    hint.issue_id !== null &&
+    !run.facts.open_issues.some((issue) => issue.issue_id === hint.issue_id)
+  ) {
+    return { applies: false, why: "the concern it was about is settled" };
+  }
+  return { applies: true, why: "" };
 }

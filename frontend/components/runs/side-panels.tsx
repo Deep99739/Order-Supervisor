@@ -12,6 +12,7 @@ import {
   RECOVERY_ACTION,
   relativeTime,
 } from "@/lib/display";
+import { hintStatus } from "@/lib/policy";
 import type { RunSnapshot } from "@/lib/contracts";
 
 export function Panel({
@@ -133,13 +134,26 @@ export function NextReviewCard({
             {snapshot.wake_guidance.version}):
           </p>
           <ul className="mt-1.5 space-y-1">
-            {snapshot.wake_guidance.hints.map((hint, index) => (
-              <li key={`${hint.kind}-${index}`} className="text-[13px] leading-5">
-                {HINT_LABEL[hint.kind]}
-                {hint.event_type ? ` · ${hint.event_type}` : ""}
-                {hint.issue_id ? ` · about “${hint.issue_id}”` : ""}
-              </li>
-            ))}
+            {snapshot.wake_guidance.hints.map((hint, index) => {
+              const status = hintStatus(snapshot, hint, now);
+              return (
+                <li key={`${hint.kind}-${index}`} className="text-[13px] leading-5">
+                  <span className={status.applies ? undefined : "line-through"}>
+                    {HINT_LABEL[hint.kind]}
+                    {hint.event_type ? ` · ${hint.event_type}` : ""}
+                    {hint.issue_id ? ` · about “${hint.issue_id}”` : ""}
+                  </span>
+                  {/* A hint is never withdrawn, it just stops counting. Saying so is the
+                      difference between a record and a claim about current behaviour. */}
+                  {status.applies ? null : (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      — no longer applied, {status.why}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}

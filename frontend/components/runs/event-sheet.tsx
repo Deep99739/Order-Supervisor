@@ -308,7 +308,14 @@ export function EventSheet({
       onOpenChange={(next) => (next ? setOpen(true) : close())}
     >
       <SheetTrigger asChild>
-        <Button className="h-10" disabled={disabled} title={disabledReason}>
+        {/* Half-opacity teal still reads as the page's main action. On a closed run the
+            strongest control on screen must not be the one that cannot be used. */}
+        <Button
+          className="h-10"
+          variant={disabled ? "outline" : "default"}
+          disabled={disabled}
+          title={disabledReason}
+        >
           <Radio className="size-4" aria-hidden="true" />
           Inject event
         </Button>
