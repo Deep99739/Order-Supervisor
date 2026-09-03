@@ -27,6 +27,9 @@ class EffectivePolicy:
     prioritize_speed: bool
     escalate_shipment_delays: bool
     require_customer_review: bool
+    # True when review is on because free text arrived whose customer-contact stance is
+    # unclear, rather than because anyone asked for it. The UI says which it is.
+    review_from_ambiguity: bool = False
 
 
 @dataclass(frozen=True)
@@ -42,34 +45,43 @@ class PolicyDecision:
 
 
 def effective_policy(snapshot: RunSnapshot) -> EffectivePolicy:
+    """Merge the frozen template with the named controls the operator actually set.
+
+    Free-form instruction text is pinned guidance for the agent; this system does not
+    claim to compile arbitrary English into policy. So when an instruction arrives whose
+    stance on customer contact is unstated, customer messages fall back to requiring
+    approval until the operator answers that question through the named control. The
+    conservative direction is a review hold, never inferred permission.
+    """
     template = snapshot.supervisor
-    resolved = EffectivePolicy(
-        prioritize_speed=template.prioritize_speed,
-        escalate_shipment_delays=template.escalate_shipment_delays,
-        require_customer_review=template.customer_review_default,
-    )
+    prioritize_speed = template.prioritize_speed
+    escalate_delays = template.escalate_shipment_delays
+    review = template.customer_review_default
+    review_stated = False
+    unclassified = False
+
     for instruction in snapshot.instructions:
         changes = instruction.policy_changes
         if changes is None:
+            unclassified = True
             continue
-        resolved = EffectivePolicy(
-            prioritize_speed=(
-                resolved.prioritize_speed
-                if changes.prioritize_speed is None
-                else changes.prioritize_speed
-            ),
-            escalate_shipment_delays=(
-                resolved.escalate_shipment_delays
-                if changes.escalate_shipment_delays is None
-                else changes.escalate_shipment_delays
-            ),
-            require_customer_review=(
-                resolved.require_customer_review
-                if changes.require_customer_review is None
-                else changes.require_customer_review
-            ),
-        )
-    return resolved
+        if changes.prioritize_speed is not None:
+            prioritize_speed = changes.prioritize_speed
+        if changes.escalate_shipment_delays is not None:
+            escalate_delays = changes.escalate_shipment_delays
+        if changes.require_customer_review is None:
+            unclassified = True
+        else:
+            review = changes.require_customer_review
+            review_stated = True
+
+    ambiguous = unclassified and not review_stated and not review
+    return EffectivePolicy(
+        prioritize_speed=prioritize_speed,
+        escalate_shipment_delays=escalate_delays,
+        require_customer_review=review or ambiguous,
+        review_from_ambiguity=ambiguous,
+    )
 
 
 def classify(

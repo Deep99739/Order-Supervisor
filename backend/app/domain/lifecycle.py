@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from app.contracts.decision import DecisionProposal
 from app.contracts.run import RunSnapshot
+from app.domain.policy import effective_policy
 from app.domain.vocabulary import CloseReason
 
 
@@ -32,8 +33,21 @@ def closure_cause(snapshot: RunSnapshot, now: datetime) -> CloseReason | None:
 def effective_wake(
     proposal: DecisionProposal | None, snapshot: RunSnapshot, *, now: datetime
 ) -> WakeSchedule:
-    """Validate a proposed sleep against the template's permitted range and the age deadline."""
+    """Validate a proposed sleep against the template's permitted range and the age deadline.
+
+    "Prioritize speed over cost" is one of the assignment's named instructions, and here
+    it is a deterministic effect rather than a hint in a prompt: the permitted horizon
+    shortens to the template's own default, and an unusable proposal falls back to half
+    of it. Both stay inside the configured bounds; speed never invents a new range.
+    """
     profile = snapshot.supervisor.wake_profile
+    urgent = effective_policy(snapshot).prioritize_speed
+    ceiling = profile.default_seconds if urgent else profile.maximum_seconds
+    fallback = (
+        max(profile.minimum_seconds, profile.default_seconds // 2)
+        if urgent
+        else profile.default_seconds
+    )
     requested: float | None = None
     described = "no timing was proposed"
 
@@ -45,10 +59,8 @@ def effective_wake(
             requested = (proposal.sleep_until - now).total_seconds()
             described = proposal.sleep_until.isoformat()
 
-    permitted = requested is not None and (
-        profile.minimum_seconds <= requested <= profile.maximum_seconds
-    )
-    seconds = requested if permitted else float(profile.default_seconds)
+    permitted = requested is not None and profile.minimum_seconds <= requested <= ceiling
+    seconds = requested if permitted else float(fallback)
     deadline = now + timedelta(seconds=seconds)
 
     if permitted:
@@ -57,9 +69,10 @@ def effective_wake(
         # A malformed, past, or out-of-range request never becomes a hot loop.
         explanation = (
             f"Requested {described} is outside the permitted "
-            f"{profile.minimum_seconds}-{profile.maximum_seconds}s range; "
-            f"using the {profile.default_seconds}s default."
+            f"{profile.minimum_seconds}-{ceiling}s range; using {int(fallback)}s."
         )
+        if urgent:
+            explanation = f"{explanation} A standing instruction prioritises speed."
 
     if deadline > snapshot.maximum_age_at:
         deadline = snapshot.maximum_age_at

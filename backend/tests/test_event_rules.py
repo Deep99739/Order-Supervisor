@@ -11,6 +11,7 @@ import pytest
 from app.contracts.commands import PolicyChanges
 from app.contracts.decision import DecisionProposal
 from app.domain import events, lifecycle, memory, policy
+from app.domain.presets import PRESETS
 from app.domain.vocabulary import CloseReason
 from tests.conftest import RULES_NOW, sample_event, sample_evidence, sample_snapshot
 
@@ -28,6 +29,23 @@ def confirmed_payment(**overrides):
         "payment_observed_at": RULES_NOW,
     } | overrides
     return sample_snapshot(facts=facts)
+
+
+def instructed(text: str, changes: PolicyChanges | None = None, **overrides):
+    """A run carrying one standing instruction, with or without a named control."""
+    identity = sample_snapshot().run_id
+    return sample_snapshot(
+        instructions=[
+            {
+                "instruction_id": identity,
+                "text": text,
+                "added_at": RULES_NOW,
+                "source_command_id": identity,
+                "policy_changes": changes.model_dump() if changes else None,
+            }
+        ],
+        **overrides,
+    )
 
 
 # --- newer facts are never silently reversed -------------------------------------------
@@ -262,6 +280,29 @@ def test_instructions_override_template_policy_defaults():
     assert resolved.prioritize_speed is False
 
 
+def test_free_text_with_an_unstated_stance_falls_back_to_requiring_review():
+    """The POC does not claim to compile English into policy, so the unclear case holds
+    customer contact for a person rather than inferring permission."""
+    resolved = policy.effective_policy(instructed("Keep an eye on the carrier for this one."))
+    assert resolved.require_customer_review is True
+    assert resolved.review_from_ambiguity is True
+
+
+def test_an_operator_answering_the_named_control_resolves_the_ambiguity():
+    allowed = policy.effective_policy(
+        instructed("Keep an eye on the carrier.", PolicyChanges(require_customer_review=False))
+    )
+    assert allowed.require_customer_review is False
+    assert allowed.review_from_ambiguity is False
+
+
+def test_a_template_that_already_requires_review_is_not_reported_as_ambiguous():
+    review_first = sample_snapshot(supervisor=PRESETS[2])
+    resolved = policy.effective_policy(review_first)
+    assert resolved.require_customer_review is True
+    assert resolved.review_from_ambiguity is False
+
+
 # --- deadlines --------------------------------------------------------------------------
 
 
@@ -294,6 +335,30 @@ def test_a_review_is_never_scheduled_past_the_original_age_deadline():
     )
     assert schedule.deadline == snapshot.maximum_age_at
     assert "age deadline" in schedule.explanation
+
+
+def test_prioritising_speed_shortens_the_permitted_review_horizon():
+    """The named control is a deterministic effect, not a suggestion in a prompt."""
+    snapshot = instructed("Prioritize speed over cost.", PolicyChanges(prioritize_speed=True))
+    profile = snapshot.supervisor.wake_profile
+
+    # A gap the template would ordinarily allow is now outside the permitted range.
+    long_wait = lifecycle.effective_wake(
+        DecisionProposal(rationale="Later", sleep_for_seconds=profile.maximum_seconds),
+        snapshot,
+        now=RULES_NOW,
+    )
+    assert long_wait.used_default is True
+    assert "prioritises speed" in long_wait.explanation
+    assert long_wait.deadline - RULES_NOW == timedelta(seconds=profile.default_seconds // 2)
+
+    # Anything inside the shortened range is still the agent's call.
+    prompt = lifecycle.effective_wake(
+        DecisionProposal(rationale="Soon", sleep_for_seconds=profile.default_seconds),
+        snapshot,
+        now=RULES_NOW,
+    )
+    assert prompt.used_default is False
 
 
 def test_maximum_age_is_the_only_cause_this_module_observes():
