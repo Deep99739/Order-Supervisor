@@ -148,12 +148,14 @@ export function OutcomeTab({ snapshot }: { snapshot: RunSnapshot }) {
           </span>
         </div>
         <p className="mt-4 leading-6 whitespace-pre-wrap">{report.summary}</p>
+        {/* The report's own limitation already names the model and what it could not
+            change. Restating it here would say the same thing twice. */}
         <p className="mt-4 border-t pt-3 text-[13px] leading-5 text-muted-foreground">
-          {report.narrative_provenance === "model_assisted"
-            ? "The agent wrote the closing text from the recorded facts. The facts, receipts, and unresolved list are not its to change."
-            : "The narrative was rendered from the record rather than written by the agent."}{" "}
-          {report.narrative_limitation ?? ""} Evidence considered through record #
-          {report.evidence_through_sequence}.
+          {report.narrative_limitation ??
+            (report.narrative_provenance === "model_assisted"
+              ? "The agent wrote the closing text over facts it could not change."
+              : "The narrative was rendered from the record rather than written by the agent.")}{" "}
+          Evidence considered through record #{report.evidence_through_sequence}.
         </p>
       </Panel>
 
