@@ -67,7 +67,9 @@ with workflow.unsafe.imports_passed_through():
         ACTION_LEDGER,
         CLOSED_STATUS,
         CONTEXT_BUDGET_BYTES,
+        CONTINUATION_EVENTS,
         CONTROL_SIGNAL,
+        DEMO_CONTINUATION_EVENTS,
         EVENT_SIGNAL,
         EVIDENCE_REFERENCES,
         INSTRUCTION_SIGNAL,
@@ -84,7 +86,7 @@ with workflow.unsafe.imports_passed_through():
         decision_id,
         operation_id,
     )
-    from app.workflows.state import WorkflowInput
+    from app.workflows.state import WorkflowCarry, WorkflowInput
 
 COMMIT_ACTIVITY = "commit_transition"
 DECIDE_ACTIVITY = "decide"
@@ -182,13 +184,22 @@ class OrderSupervisor:
 
     @workflow.run
     async def run(self, initial_input: dict[str, Any]) -> dict[str, Any]:
-        data = WorkflowInput.model_validate(initial_input)
-        self._snapshot = data.snapshot
-        self._initial_event_id = data.initial_event_id
+        carried = initial_input.get("kind") == "carry"
+        if carried:
+            self._restore(WorkflowCarry.model_validate(initial_input))
+        else:
+            data = WorkflowInput.model_validate(initial_input)
+            self._snapshot = data.snapshot
+            self._initial_event_id = data.initial_event_id
+
         if self._snapshot.status in set(CLOSED_STATUS.values()):
             return self._result("already closed")
 
-        if self._snapshot.status == RunStatus.STARTING:
+        if carried:
+            # A resumed execution records the generation it is, once, and picks up the
+            # work it was already doing. It never initialises the order again.
+            await self._record_generation()
+        elif self._snapshot.status == RunStatus.STARTING:
             await self._initialize()
 
         while True:
@@ -214,7 +225,158 @@ class OrderSupervisor:
             await self._settle_memory()
             # 9. Make the waiting state visible before actually waiting.
             await self._settle_waiting_state()
+            # 10. A long-lived order outgrows one Temporal execution. This is the only
+            #     safe place to hand over: nothing is in flight and the record is settled.
+            await self._roll_over_if_due()
             await self._wait_for_work()
+
+    # -------------------------------------------------------------------- continuation
+
+    def _restore(self, carry: WorkflowCarry) -> None:
+        """Pick up exactly where the previous execution left off.
+
+        Counters come back because they mint identifiers: restarting them would reuse an
+        operation ID and make a replayed write look like a fresh one. Commands and
+        operator intent come back because accepting work and then dropping it at an
+        internal boundary the operator never asked for would be the worst kind of bug.
+        """
+        self._snapshot = carry.confirmed_snapshot
+        self._initial_event_id = carry.initial_event_id
+        self._operations = carry.operation_counter
+        self._decisions = carry.decision_counter
+        self._drafts = carry.draft_counter
+        self._stale_discards = carry.stale_discards
+        self._terminal_pending = carry.terminal_pending
+        self._inbox = [
+            {"kind": item.kind, "command": item.command} for item in carry.pending_commands
+        ]
+        self._latches = {
+            key: latch.model_dump(mode="json")
+            for key, latch in carry.pending_control_intents.items()
+        }
+        if carry.closure_latch is not None:
+            self._closure = {
+                "reason": carry.closure_latch.reason,
+                "observed_at": carry.closure_latch.observed_at.isoformat(),
+            }
+        self._trigger = carry.pending_trigger
+        self._trigger_detail = carry.pending_trigger_detail or ""
+
+    def _carry(self) -> dict[str, Any]:
+        latch = self._closure
+        return WorkflowCarry(
+            initial_event_id=self._initial_event_id,
+            confirmed_snapshot=self._snapshot,
+            operation_counter=self._operations,
+            decision_counter=self._decisions,
+            draft_counter=self._drafts,
+            stale_discards=self._stale_discards,
+            pending_commands=[
+                {"kind": item["kind"], "command": item["command"]} for item in self._inbox
+            ],
+            pending_control_intents=self._latches,
+            terminal_pending=self._terminal_pending,
+            closure_latch=(
+                {"reason": latch["reason"], "observed_at": latch["observed_at"]}
+                if latch
+                else None
+            ),
+            pending_trigger=self._trigger,
+            pending_trigger_detail=self._trigger_detail or None,
+        ).model_dump(mode="json")
+
+    def _continuation_threshold(self) -> int:
+        if self._snapshot.supervisor.wake_profile.mode == "demo":
+            return DEMO_CONTINUATION_EVENTS
+        return CONTINUATION_EVENTS
+
+    def _continuation_due(self) -> bool:
+        """History length is per execution, so this counter resets itself on rollover.
+
+        That is the whole reason a fresh execution cannot immediately continue again.
+        """
+        info = workflow.info()
+        return (
+            info.is_continue_as_new_suggested()
+            or info.get_current_history_length() >= self._continuation_threshold()
+        )
+
+    async def _record_generation(self) -> None:
+        """Say, once, which execution this is. A preparation is not a rollover; an
+        execution that actually resumed is."""
+        document = self._document()
+        document["execution_generation"] += 1
+        document["counters"]["continuations"] += 1
+        generation = document["execution_generation"]
+        await self._commit(
+            RunSnapshot.model_validate(document),
+            [
+                ProposedEntry(
+                    entry_id=workflow.uuid4(),
+                    kind="continuation",
+                    disposition="applied",
+                    explanation=(
+                        f"History continued as generation {generation}. The order, its "
+                        "deadline, and everything pending carried over unchanged."
+                    ),
+                    dedupe_key=f"operation:generation/{generation}",
+                    dedupe_digest=canonical_digest(
+                        {"run": str(self._snapshot.run_id), "generation": generation}
+                    ),
+                    details={
+                        "execution_generation": generation,
+                        "pending_commands": len(self._inbox),
+                        "next_wake_at": document["next_wake_at"],
+                        "status": document["status"],
+                    },
+                )
+            ],
+        )
+
+    async def _roll_over_if_due(self) -> None:
+        """Hand this order to a fresh Temporal execution, losing nothing.
+
+        Ineligible unless everything has settled: no closure to run, no queued command,
+        no operator intent waiting to be applied. Those are all cheap to wait for, and
+        the alternative is carrying work across a boundary in an ambiguous state.
+        """
+        if self._closure is not None or self._inbox or self._latches:
+            return
+        if self._snapshot.status in {RunStatus.EVALUATING, RunStatus.FINALIZING}:
+            return
+        if not self._continuation_due():
+            return
+
+        generation = self._snapshot.execution_generation + 1
+        await self._commit(
+            self._snapshot,
+            [
+                ProposedEntry(
+                    entry_id=workflow.uuid4(),
+                    kind="continuation",
+                    disposition="recorded",
+                    explanation=(
+                        f"Preparing to continue this order's history as generation "
+                        f"{generation}; supervision itself is unaffected."
+                    ),
+                    details={
+                        "stage": "prepared",
+                        "next_generation": generation,
+                        "history_events": workflow.info().get_current_history_length(),
+                    },
+                )
+            ],
+        )
+
+        # Anything that arrived while that write was in flight is settled here, so it
+        # crosses the boundary as carried work rather than as a lost signal. A terminal
+        # command that won in the meantime closes the run instead of continuing it.
+        await self._drain_inbox()
+        self._observe_age()
+        if self._closure is not None:
+            return
+        await workflow.wait_condition(workflow.all_handlers_finished)
+        workflow.continue_as_new(self._carry())
 
     # ------------------------------------------------------------------- initialization
 

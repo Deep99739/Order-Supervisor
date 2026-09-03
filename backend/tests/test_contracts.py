@@ -29,17 +29,27 @@ async def test_snapshot_and_carry_round_trip_default_temporal_json():
                 "command": {"command_id": COMMAND_ID, "kind": "pause"},
             }
         ],
-        pending_control_intents={COMMAND_ID: "pause"},
+        pending_control_intents={COMMAND_ID: {"kind": "pause", "during_effect": True}},
         pending_trigger="important_event",
+        pending_trigger_detail="A delay arrived while the review was running.",
     )
     wire = carry.model_dump(mode="json")
     payloads = await DataConverter.default.encode([wire])
     (decoded,) = await DataConverter.default.decode(payloads, [dict])
     restored = WorkflowCarry.model_validate(decoded)
     assert restored == carry
+
+    # The continuity contract: identity, the original deadline, accepted work, operator
+    # intent, the counters that mint identifiers, and the reason to assess next.
+    assert restored.confirmed_snapshot.run_id == snapshot.run_id
     assert restored.confirmed_snapshot.maximum_age_at == snapshot.maximum_age_at
-    assert restored.pending_commands[0].command.kind == "pause"
+    assert restored.confirmed_snapshot.wake_guidance == snapshot.wake_guidance
+    assert restored.confirmed_snapshot.pending_review == snapshot.pending_review
+    assert restored.confirmed_snapshot.memory == snapshot.memory
+    assert restored.pending_commands[0].command["kind"] == "pause"
+    assert restored.pending_control_intents[COMMAND_ID].during_effect is True
     assert restored.operation_counter == 12
+    assert restored.pending_trigger == "important_event"
 
 
 def test_unknown_event_is_evidence_and_timestamps_normalize_to_utc():
