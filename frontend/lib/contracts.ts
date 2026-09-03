@@ -201,6 +201,7 @@ export interface CustomerDraft {
   draft_id: string;
   decision_id: string;
   action_id: string;
+  issue_id: string;
   content: string;
   content_digest: string;
   reason: string;

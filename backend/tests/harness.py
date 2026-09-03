@@ -159,6 +159,16 @@ class Supervised:
         await self.handle.signal("instruction", command)
         return command
 
+    async def send_review(self, draft_id: str, digest: str, decision: str = "approve") -> dict:
+        command = {
+            "command_id": str(uuid4()),
+            "draft_id": draft_id,
+            "content_digest": digest,
+            "decision": decision,
+        }
+        await self.handle.signal("review", command)
+        return command
+
     async def now(self) -> datetime:
         return await self.env.get_current_time()
 

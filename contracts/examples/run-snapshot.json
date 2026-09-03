@@ -96,6 +96,7 @@
     "draft_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/draft/1",
     "decision_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1",
     "action_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1/action/2",
+    "issue_id": "shipment-delay",
     "content": "Your order is delayed at the carrier hub. We have asked logistics for a revised date and will write again as soon as we have one.",
     "content_digest": "3d2f1b8c4a6e5079bfc1d2e3a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7",
     "reason": "This run requires human review before the customer is contacted.",

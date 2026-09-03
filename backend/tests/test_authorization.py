@@ -288,6 +288,7 @@ def test_only_one_customer_draft_waits_at_a_time():
         "draft_id": "run/draft/1",
         "decision_id": DECISION,
         "action_id": f"{DECISION}/action/9",
+        "issue_id": event_rules.SHIPMENT_DELAY_ISSUE,
         "content": "An earlier message is already waiting for approval.",
         "content_digest": "a" * 64,
         "reason": "This run requires human review before the customer is contacted.",

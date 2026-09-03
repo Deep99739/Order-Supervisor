@@ -117,6 +117,32 @@ def _repeated_contact(
     return None
 
 
+def _everything_blocked(
+    proposal: DecisionProposal,
+    decision_reference: str,
+    reason: BlockReason,
+    explanation: str,
+    *,
+    stale: bool = False,
+) -> Authorization:
+    """A global gate failed, so every proposal is refused — each one on the record."""
+    return Authorization(
+        stale=stale,
+        global_block=reason,
+        explanation=explanation,
+        blocked=tuple(
+            BlockedAction(
+                ordinal=ordinal,
+                action_id=action_id(decision_reference, ordinal),
+                action=action.action,
+                reason=reason,
+                explanation=explanation[:500],
+            )
+            for ordinal, action in enumerate(proposal.actions, start=1)
+        ),
+    )
+
+
 def authorize(
     snapshot: RunSnapshot,
     proposal: DecisionProposal,
@@ -129,34 +155,34 @@ def authorize(
 ) -> Authorization:
     """Decide which of a decision's proposals may become effects right now."""
     if closing:
-        return Authorization(
-            stale=False,
-            global_block=BlockReason.RUN_CLOSING,
-            explanation="Supervision is closing, so no further business action is authorised.",
+        return _everything_blocked(
+            proposal,
+            decision_reference,
+            BlockReason.RUN_CLOSING,
+            "Supervision is closing, so no further business action is authorised.",
         )
     if held:
-        return Authorization(
-            stale=False,
-            global_block=BlockReason.RUN_HELD,
-            explanation=(
-                "An operator hold applies, so nothing this review proposed is authorised. "
-                "The conclusions are recorded, not acted on."
-            ),
+        return _everything_blocked(
+            proposal,
+            decision_reference,
+            BlockReason.RUN_HELD,
+            "An operator hold applies, so nothing this review proposed is authorised. "
+            "The conclusions are recorded, not acted on.",
         )
     if (
         snapshot.context_version != stamp.context_version
         or snapshot.control_epoch != stamp.control_epoch
     ):
         # The decision answered a question about a context that has since moved.
-        return Authorization(
+        return _everything_blocked(
+            proposal,
+            decision_reference,
+            BlockReason.STALE_CONTEXT,
+            "The order's context changed while this review was running "
+            f"(context {stamp.context_version}->{snapshot.context_version}, "
+            f"controls {stamp.control_epoch}->{snapshot.control_epoch}); "
+            "its conclusions are discarded rather than applied to a newer situation.",
             stale=True,
-            global_block=BlockReason.STALE_CONTEXT,
-            explanation=(
-                "The order's context changed while this review was running "
-                f"(context {stamp.context_version}->{snapshot.context_version}, "
-                f"controls {stamp.control_epoch}->{snapshot.control_epoch}); "
-                "its conclusions are discarded rather than applied to a newer situation."
-            ),
         )
 
     policy = effective_policy(snapshot)
@@ -207,7 +233,12 @@ def authorize(
                 continue
 
         if definition.reviewable and policy.require_customer_review:
-            if snapshot.pending_review is not None or draft is not None:
+            # An outdated or rejected draft is history, not an occupant of the slot.
+            waiting = snapshot.pending_review is not None and snapshot.pending_review.status in (
+                "pending",
+                "approved",
+            )
+            if waiting or draft is not None:
                 refuse(
                     BlockReason.DRAFT_PENDING,
                     "Another customer draft is already waiting for review; this run holds "

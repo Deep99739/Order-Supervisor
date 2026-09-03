@@ -128,6 +128,12 @@ async def reserved(pool: asyncpg.Pool) -> Reservation:
     )
 
 
+@pytest.fixture
+def review_first():
+    """The preset whose customer messages need a person to approve them."""
+    return PRESETS[2]
+
+
 RULES_RUN = UUID("7c9f0f2e-51a3-4f0e-9c2a-2b6d5a4e1c30")
 RULES_NOW = datetime(2026, 9, 3, 3, 0, tzinfo=UTC)
 

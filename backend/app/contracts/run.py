@@ -106,6 +106,7 @@ class CustomerDraft(WireModel):
     draft_id: Reference
     decision_id: Reference
     action_id: Reference
+    issue_id: Reference
     content: Message
     content_digest: Digest
     reason: ShortText

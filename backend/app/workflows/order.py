@@ -34,19 +34,29 @@ with workflow.unsafe.imports_passed_through():
         InstructionCommand,
         ReviewCommand,
     )
-    from app.contracts.decision import DecisionRequest, DecisionResult
+    from app.contracts.decision import ActionProposal, DecisionRequest, DecisionResult
     from app.contracts.persistence import ProposedEntry, TransitionReceipt, TransitionRequest
     from app.contracts.run import (
         ActiveInstruction,
+        CommittedAction,
         ContextStamp,
+        CustomerDraft,
         EvidenceReference,
         FinalOutput,
         RunSnapshot,
     )
+    from app.domain import actions as action_registry
     from app.domain import events as event_rules
     from app.domain import lifecycle, memory, policy
+    from app.domain.authorization import (
+        AdmittedAction,
+        Authorization,
+        authorize,
+        follow_up_interval,
+    )
     from app.domain.digest import canonical_digest
     from app.domain.vocabulary import (
+        ACTION_LEDGER,
         CLOSED_STATUS,
         CONTROL_SIGNAL,
         EVENT_SIGNAL,
@@ -55,6 +65,8 @@ with workflow.unsafe.imports_passed_through():
         RECENT_RECORDS,
         REVIEW_SIGNAL,
         WORKFLOW_TYPE,
+        ActionName,
+        BlockReason,
         CloseReason,
         ControlKind,
         DecisionTrigger,
@@ -71,8 +83,22 @@ COMMIT_TIMEOUT = timedelta(seconds=20)
 DECIDE_TIMEOUT = timedelta(seconds=45)
 # Bounded so a failing provider cannot become an inference loop.
 MAX_DECISION_ATTEMPTS = 2
+# A burst of events can keep invalidating a review. After this many consecutive discards
+# the run stops trying and asks for an operator, rather than reasoning in a hot loop.
+MAX_STALE_DISCARDS = 2
 MAX_LATE_DRAIN_ROUNDS = 8
 HOLDS = {ControlKind.PAUSE, ControlKind.INTERRUPT, ControlKind.TERMINATE}
+# A draft in either of these states occupies the run's single review slot.
+LIVE_DRAFT = ("pending", "approved")
+
+_CONTROL_DISCARD = (
+    "Discarded: operator control or lifecycle intent arrived while this review was "
+    "running, so its conclusions no longer apply."
+)
+_STALE_DRAFT = (
+    "This draft was written for a situation that has since changed, so it can no longer "
+    "be sent. A new assessment produces a new draft."
+)
 
 
 @workflow.defn(name=WORKFLOW_TYPE)
@@ -86,6 +112,8 @@ class OrderSupervisor:
         self._terminal_pending = False
         self._operations = 0
         self._decisions = 0
+        self._drafts = 0
+        self._stale_discards = 0
         self._pending_operation: TransitionRequest | None = None
         self._closure: dict[str, Any] | None = None
         self._trigger: DecisionTrigger | None = None
@@ -162,7 +190,12 @@ class OrderSupervisor:
             # 4. Closing runs the controlled finalization path and nothing else.
             if self._closure is not None:
                 return await self._finalize()
-            # 5/6/7. Paused and recovering runs record, but do not reason.
+            # 5. An approved draft is released here, not inside a decision: approval is
+            #    an operator act, and it survives a pause to be revalidated on resume.
+            await self._settle_draft()
+            if self._closure is not None:
+                return await self._finalize()
+            # 6/7. Paused and recovering runs record, but do not reason.
             if self._trigger is not None and self._can_decide():
                 await self._run_decision()
                 continue
@@ -525,6 +558,12 @@ class OrderSupervisor:
         self._trigger = None
 
     async def _apply_review(self, raw: dict[str, Any]) -> None:
+        """Approve or reject one exact draft.
+
+        Approval belongs to specific content in a specific context. It is not blanket
+        permission to write to the customer, and it does not release an effect by itself
+        — that happens in `_settle_draft`, where the run's current state gets a say.
+        """
         try:
             command = ReviewCommand.model_validate(raw)
         except ValidationError:
@@ -532,12 +571,172 @@ class OrderSupervisor:
                 "review", "rejected", "The review command could not be validated.", raw
             )
             return
-        await self._record_only(
-            "review",
-            "rejected",
-            "No customer draft is pending. Drafts arrive with agent decisions.",
-            command.model_dump(mode="json"),
+
+        draft = self._snapshot.pending_review
+        if draft is None or draft.draft_id != command.draft_id:
+            await self._record_review(
+                command, "rejected", "No customer draft with that identity is waiting for review."
+            )
+            return
+        if draft.status != "pending":
+            await self._record_review(
+                command, "rejected", f"That draft is already {draft.status}, so it cannot change."
+            )
+            return
+        if draft.content_digest != command.content_digest:
+            # Approval cannot carry a replacement body; an edit needs a new draft.
+            await self._record_review(
+                command,
+                "conflict",
+                "The approved content is not the draft that is waiting; an edited message "
+                "needs a new draft.",
+            )
+            return
+        if self._draft_stale(draft):
+            document = self._document()
+            document["pending_review"] = draft.model_dump(mode="json") | {"status": "outdated"}
+            await self._commit(
+                RunSnapshot.model_validate(document),
+                [self._review_entry(command, "conflict", _STALE_DRAFT)],
+            )
+            return
+
+        decision = command.decision
+        document = self._document()
+        document["pending_review"] = draft.model_dump(mode="json") | {
+            "status": "approved" if decision == "approve" else "rejected",
+            "review_command_id": str(command.command_id),
+        }
+        explanation = (
+            "Approved by an operator. The message is recorded once the run's current state "
+            "still supports it."
+            if decision == "approve"
+            else "Rejected by an operator. No customer message is recorded and the review "
+            "slot is free."
+        )
+        await self._commit(
+            RunSnapshot.model_validate(document),
+            [self._review_entry(command, "applied", explanation)],
+        )
+
+    def _draft_stale(self, draft: CustomerDraft) -> bool:
+        """A draft speaks for the situation it was written in, and no other.
+
+        Deliberately `context_version` and not `control_epoch`: what invalidates a
+        message to a customer is the facts or the instructions changing under it. An
+        operator pausing and resuming is not a reason to void the approval that same
+        operator gave — otherwise approving during a hold could never mean anything.
+        """
+        return draft.context.context_version != self._snapshot.context_version
+
+    def _review_entry(
+        self, command: ReviewCommand, disposition: str, explanation: str
+    ) -> ProposedEntry:
+        envelope = command.model_dump(mode="json")
+        return ProposedEntry(
+            entry_id=workflow.uuid4(),
+            kind="review",
+            disposition=disposition,
+            explanation=explanation[:500],
             command_id=command.command_id,
+            # A replayed approval resolves to this same record instead of acting twice.
+            dedupe_key=f"command:{command.command_id}",
+            dedupe_digest=canonical_digest(envelope),
+            details=envelope,
+        )
+
+    async def _record_review(
+        self, command: ReviewCommand, disposition: str, explanation: str
+    ) -> None:
+        await self._commit(self._snapshot, [self._review_entry(command, disposition, explanation)])
+
+    # -------------------------------------------------------------- customer draft release
+
+    async def _settle_draft(self) -> None:
+        """Decide what becomes of the current draft now that the situation is known."""
+        draft = self._snapshot.pending_review
+        if draft is None or draft.status not in LIVE_DRAFT:
+            return
+        if not self._draft_stale(draft):
+            if draft.status == "approved" and self._can_act():
+                await self._commit_approved_draft(draft)
+            return
+
+        # Material facts, a changed instruction, or an operator boundary moved underneath
+        # it. Neither a pending nor an approved draft survives that.
+        document = self._document()
+        document["pending_review"] = draft.model_dump(mode="json") | {"status": "outdated"}
+        await self._commit(
+            RunSnapshot.model_validate(document),
+            [
+                ProposedEntry(
+                    entry_id=workflow.uuid4(),
+                    kind="review",
+                    disposition="conflict",
+                    explanation=_STALE_DRAFT,
+                    decision_id=draft.decision_id,
+                    action_id=draft.action_id,
+                    details={"draft_id": draft.draft_id, "previous_status": draft.status},
+                )
+            ],
+        )
+
+    async def _commit_approved_draft(self, draft: CustomerDraft) -> None:
+        """Record the customer message and spend the approval in one transaction."""
+        now = workflow.now()
+        entry_id = workflow.uuid4()
+        sequence = self._snapshot.last_sequence + 1
+        proposal = ActionProposal(
+            action=ActionName.MESSAGE_CUSTOMER,
+            content=draft.content,
+            issue_id=draft.issue_id,
+            rationale="Approved by an operator before the customer was contacted.",
+        )
+        document = self._document()
+        document["pending_review"] = None
+        document["context_version"] += 1
+        self._absorb_action(
+            document,
+            AdmittedAction(
+                ordinal=1,
+                action_id=draft.action_id,
+                audience=action_registry.audience_of(ActionName.MESSAGE_CUSTOMER),
+                proposal=proposal,
+                review="approved",
+            ),
+            entry_id=entry_id,
+            sequence=sequence,
+            now=now,
+        )
+        await self._commit(
+            self._with_memory(RunSnapshot.model_validate(document)),
+            [
+                ProposedEntry(
+                    entry_id=entry_id,
+                    kind="action",
+                    disposition="committed",
+                    explanation="Customer message recorded after operator approval.",
+                    decision_id=draft.decision_id,
+                    action_id=draft.action_id,
+                    dedupe_key=f"action:{draft.action_id}",
+                    dedupe_digest=canonical_digest(
+                        {"action_id": draft.action_id, "content": draft.content}
+                    ),
+                    details=action_registry.receipt_details(proposal, review="approved")
+                    | {"draft_id": draft.draft_id, "content_digest": draft.content_digest},
+                ),
+                ProposedEntry(
+                    entry_id=workflow.uuid4(),
+                    kind="review",
+                    disposition="applied",
+                    explanation="Approval consumed. It cannot authorise a second message.",
+                    action_id=draft.action_id,
+                    details={
+                        "draft_id": draft.draft_id,
+                        "review_command_id": str(draft.review_command_id),
+                    },
+                ),
+            ],
         )
 
     # ------------------------------------------------------------------------ decisions
@@ -549,6 +748,14 @@ class OrderSupervisor:
             and self._snapshot.status
             not in {RunStatus.PAUSED, RunStatus.AWAITING_RECOVERY, RunStatus.FINALIZING}
         )
+
+    def _can_act(self) -> bool:
+        """Whether a business effect may be committed at this instant.
+
+        Stricter than `_can_decide`: an operator hold that has been taken but not yet
+        recorded still stops an effect, and so does a pause already on its way in.
+        """
+        return self._can_decide() and self._snapshot.pending_control is None
 
     async def _run_decision(self) -> None:
         trigger = self._trigger
@@ -582,16 +789,56 @@ class OrderSupervisor:
         result, attempts, failure = await self._attempt_decision(reference, trigger, detail, stamp)
 
         if result is None and failure is None:
-            await self._discard_decision(reference, attempts)
+            await self._discard_decision(reference, attempts, _CONTROL_DISCARD)
             return
         if result is None:
             await self._enter_recovery(reference, attempts, failure or "The decision failed.")
             return
-        # A decision computed before a new control boundary cannot cross it.
-        if not self._can_decide() or self._snapshot.control_epoch != stamp.control_epoch:
-            await self._discard_decision(reference, attempts)
+
+        # Everything that queued up while the model was thinking is settled *before* its
+        # conclusions are judged. This is the point where a plan can turn out to be about
+        # a situation that no longer exists.
+        await self._drain_inbox()
+        self._observe_age()
+
+        verdict = authorize(
+            self._snapshot,
+            result.proposal,
+            stamp,
+            reference,
+            now=workflow.now(),
+            closing=self._closure is not None,
+            held=not self._can_act(),
+        )
+        if verdict.stale:
+            await self._discard_stale(reference, trigger, detail, attempts, verdict)
             return
-        await self._record_decision(reference, trigger, result, attempts, stamp)
+        self._stale_discards = 0
+        if verdict.global_block is not None:
+            await self._discard_decision(reference, attempts, verdict.explanation, verdict=verdict)
+            return
+        await self._record_decision(reference, trigger, result, attempts, stamp, verdict)
+
+    async def _discard_stale(
+        self, reference: str, trigger: Any, detail: str, attempts: int, verdict: Authorization
+    ) -> None:
+        """Let go of a review the world moved on from, and bound how often that repeats."""
+        self._stale_discards += 1
+        await self._discard_decision(reference, attempts, verdict.explanation, verdict=verdict)
+        if self._stale_discards >= MAX_STALE_DISCARDS:
+            self._stale_discards = 0
+            await self._enter_recovery(
+                reference,
+                0,
+                f"{MAX_STALE_DISCARDS} consecutive reviews were invalidated by newly arriving "
+                "context. Supervision is holding rather than reasoning in a loop; resume once "
+                "the order has settled.",
+            )
+            return
+        # Reassess under the trigger that asked for this, unless drained work already set one.
+        if self._trigger is None and self._can_decide():
+            self._trigger = trigger
+            self._trigger_detail = detail
 
     async def _attempt_decision(
         self, reference: str, trigger: Any, detail: str, stamp: ContextStamp
@@ -658,9 +905,13 @@ class OrderSupervisor:
         result: DecisionResult,
         attempts: int,
         stamp: ContextStamp,
+        verdict: Authorization,
     ) -> None:
+        """Commit the whole episode — conclusions, admitted effects, refusals, and the
+        next review — as one transaction, so the record can never show half of it."""
         proposal = result.proposal
-        schedule = lifecycle.effective_wake(proposal, self._snapshot, now=workflow.now())
+        now = workflow.now()
+        schedule = lifecycle.effective_wake(proposal, self._snapshot, now=now)
 
         document = self._document()
         document["status"] = str(RunStatus.SLEEPING)
@@ -671,7 +922,10 @@ class OrderSupervisor:
         document["last_decision_through_sequence"] = stamp.evidence_through_sequence
         # This episode considered the evidence deferred up to its cutoff.
         document["deferred_evidence"] = []
-        candidate = self._with_memory(RunSnapshot.model_validate(document))
+        if verdict.commits_anything:
+            # A recorded effect and a waiting draft are both material context for the
+            # next decision, so anything prepared against the old one is now stale.
+            document["context_version"] += 1
 
         entries = [
             ProposedEntry(
@@ -685,29 +939,104 @@ class OrderSupervisor:
                     "provenance": result.provenance,
                     "model_label": result.model_label,
                     "attempts": attempts,
+                    "usage": result.usage.model_dump(mode="json") if result.usage else None,
                     "completion_recommendation": proposal.completion_recommendation,
+                    "admitted": len(verdict.admitted),
+                    "blocked": len(verdict.blocked),
                     "stage": "completed",
                 },
             )
         ]
-        for ordinal, action in enumerate(proposal.actions, start=1):
+
+        def sequence_of_next_entry() -> int:
+            return self._snapshot.last_sequence + len(entries) + 1
+
+        for admitted in verdict.admitted:
+            entry_id = workflow.uuid4()
+            self._absorb_action(
+                document, admitted, entry_id=entry_id, sequence=sequence_of_next_entry(), now=now
+            )
+            entries.append(
+                ProposedEntry(
+                    entry_id=entry_id,
+                    kind="action",
+                    disposition="committed",
+                    explanation=admitted.proposal.rationale,
+                    decision_id=reference,
+                    action_id=admitted.action_id,
+                    # A replay of this transition resolves to the original receipt.
+                    dedupe_key=f"action:{admitted.action_id}",
+                    dedupe_digest=canonical_digest(
+                        {
+                            "action_id": admitted.action_id,
+                            "content": admitted.proposal.content,
+                        }
+                    ),
+                    details=action_registry.receipt_details(
+                        admitted.proposal, review=admitted.review
+                    ),
+                )
+            )
+
+        for refused in verdict.blocked:
             entries.append(
                 ProposedEntry(
                     entry_id=workflow.uuid4(),
                     kind="action",
-                    # Proposed, never executed: authorisation and receipts are the next phase.
-                    disposition="proposed",
-                    explanation=action.rationale,
+                    disposition="blocked",
+                    explanation=refused.explanation,
                     decision_id=reference,
-                    action_id=f"{reference}/action/{ordinal}",
+                    action_id=refused.action_id,
                     details={
-                        "action": str(action.action),
-                        "content": action.content,
-                        "issue_id": action.issue_id,
+                        "action": str(refused.action),
+                        "reason": str(refused.reason),
                         "executed": False,
                     },
                 )
             )
+
+        if verdict.draft is not None:
+            request = verdict.draft
+            self._drafts += 1
+            draft = CustomerDraft(
+                draft_id=f"{self._snapshot.run_id}/draft/{self._drafts}",
+                decision_id=reference,
+                action_id=request.action_id,
+                issue_id=request.proposal.issue_id,
+                content=request.proposal.content,
+                content_digest=canonical_digest({"content": request.proposal.content}),
+                reason=request.reason,
+                context=ContextStamp(
+                    context_version=document["context_version"],
+                    control_epoch=document["control_epoch"],
+                    # The last entry this transition will write. Binding the draft to the
+                    # state *after* this commit is what stops the episode's own internal
+                    # receipts from ageing out the draft it created alongside them.
+                    evidence_through_sequence=self._snapshot.last_sequence + len(entries) + 2,
+                ),
+                status="pending",
+            )
+            document["pending_review"] = draft.model_dump(mode="json")
+            entries.append(
+                ProposedEntry(
+                    entry_id=workflow.uuid4(),
+                    kind="action",
+                    disposition="pending_review",
+                    explanation=request.reason,
+                    decision_id=reference,
+                    action_id=request.action_id,
+                    details={
+                        "action": str(ActionName.MESSAGE_CUSTOMER),
+                        "reason": str(BlockReason.APPROVAL_REQUIRED),
+                        "draft_id": draft.draft_id,
+                        "content": draft.content,
+                        "content_digest": draft.content_digest,
+                        "issue_id": draft.issue_id,
+                        "executed": False,
+                    },
+                )
+            )
+
         entries.append(
             ProposedEntry(
                 entry_id=workflow.uuid4(),
@@ -721,27 +1050,103 @@ class OrderSupervisor:
                 },
             )
         )
-        await self._commit(candidate, entries)
+        await self._commit(self._with_memory(RunSnapshot.model_validate(document)), entries)
 
-    async def _discard_decision(self, reference: str, attempts: int) -> None:
+    def _absorb_action(
+        self,
+        document: dict[str, Any],
+        admitted: AdmittedAction,
+        *,
+        entry_id: Any,
+        sequence: int,
+        now: Any,
+    ) -> None:
+        """Fold one about-to-be-committed action into the candidate snapshot.
+
+        The receipt points at the entry this transition is about to write, which is why
+        the workflow names entries itself rather than letting the database assign them.
+        """
+        document["counters"]["committed_actions"] += 1
+        ledger = document["committed_actions"] + [
+            CommittedAction(
+                action_id=admitted.action_id,
+                action=admitted.action,
+                content=admitted.proposal.content,
+                receipt=EvidenceReference(sequence=sequence, activity_id=entry_id),
+                recorded_at=now,
+            ).model_dump(mode="json")
+        ]
+        document["committed_actions"] = ledger[-ACTION_LEDGER:]
+
+        issue_id = admitted.proposal.issue_id
+        if issue_id is None:
+            return
+        follow_up = now + follow_up_interval(self._snapshot)
+        for issue in document["facts"]["open_issues"]:
+            if issue["issue_id"] != issue_id:
+                continue
+            # One entry per audience: the question is "have we already told them", not
+            # "how many times", and the snapshot stays bounded either way.
+            contacts = [item for item in issue["contacts"] if item["audience"] != admitted.audience]
+            contacts.append(
+                {
+                    "audience": str(admitted.audience),
+                    "action_id": admitted.action_id,
+                    "context_version": document["context_version"],
+                    "contacted_at": now.isoformat(),
+                    "follow_up_at": follow_up.isoformat(),
+                }
+            )
+            issue["contacts"] = contacts
+            issue["last_action_id"] = admitted.action_id
+            issue["follow_up_at"] = follow_up.isoformat()
+            return
+
+    async def _discard_decision(
+        self,
+        reference: str,
+        attempts: int,
+        explanation: str,
+        *,
+        verdict: Authorization | None = None,
+    ) -> None:
+        """Record a review whose conclusions were never authorised, and why."""
         document = self._document()
         document["counters"]["model_attempts"] += attempts
-        await self._commit(
-            RunSnapshot.model_validate(document),
-            [
+        entries = [
+            ProposedEntry(
+                entry_id=workflow.uuid4(),
+                kind="decision",
+                disposition="rejected",
+                explanation=explanation[:500],
+                decision_id=reference,
+                details={
+                    "stage": "discarded",
+                    "attempts": attempts,
+                    "reason": str(verdict.global_block) if verdict else None,
+                },
+            )
+        ]
+        if verdict is not None:
+            # Each refused proposal is named individually: an operator needs to see what
+            # the agent wanted to do, not only that something was stopped.
+            entries.extend(
                 ProposedEntry(
                     entry_id=workflow.uuid4(),
-                    kind="decision",
-                    disposition="rejected",
-                    explanation=(
-                        "Discarded: operator control or lifecycle intent arrived while this "
-                        "review was running, so its conclusions no longer apply."
-                    ),
+                    kind="action",
+                    disposition="blocked",
+                    explanation=refused.explanation,
                     decision_id=reference,
-                    details={"stage": "discarded", "attempts": attempts},
+                    action_id=refused.action_id,
+                    details={
+                        "action": str(refused.action),
+                        "reason": str(refused.reason),
+                        "executed": False,
+                    },
                 )
-            ],
-        )
+                for refused in verdict.blocked
+            )
+        await self._commit(RunSnapshot.model_validate(document), entries)
 
     async def _enter_recovery(self, reference: str, attempts: int, failure: str) -> None:
         document = self._document()
@@ -831,29 +1236,45 @@ class OrderSupervisor:
     async def _finalize(self) -> dict[str, Any]:
         reason = CloseReason(self._closure["reason"])
         now = workflow.now()
+        # An unspent draft or approval does not survive closure, and the report says so
+        # rather than leaving the customer's side of it unexplained.
+        draft = self._snapshot.pending_review
+        abandoned = draft if draft is not None and draft.status in LIVE_DRAFT else None
 
         # Freeze the report cutoff. No new business work is authorized from here.
         finalizing = self._document()
         finalizing["status"] = str(RunStatus.FINALIZING)
         finalizing["pending_control"] = None
         finalizing["pending_review"] = None
-        await self._commit(
-            RunSnapshot.model_validate(finalizing),
-            [
+        entries = [
+            ProposedEntry(
+                entry_id=workflow.uuid4(),
+                kind="finalization",
+                disposition="recorded",
+                explanation=f"Closing under the {reason} rule; freezing the report facts.",
+                details={
+                    "close_reason": str(reason),
+                    "observed_at": self._closure["observed_at"],
+                },
+            )
+        ]
+        if abandoned is not None:
+            entries.append(
                 ProposedEntry(
                     entry_id=workflow.uuid4(),
-                    kind="finalization",
-                    disposition="recorded",
-                    explanation=f"Closing under the {reason} rule; freezing the report facts.",
-                    details={
-                        "close_reason": str(reason),
-                        "observed_at": self._closure["observed_at"],
-                    },
+                    kind="review",
+                    disposition="too_late",
+                    explanation=(
+                        f"The run closed while this draft was {abandoned.status}; no customer "
+                        "message was recorded for it."
+                    ),
+                    action_id=abandoned.action_id,
+                    details={"draft_id": abandoned.draft_id, "status": abandoned.status},
                 )
-            ],
-        )
+            )
+        await self._commit(RunSnapshot.model_validate(finalizing), entries)
 
-        final = _final_output(self._snapshot, reason, now)
+        final = _final_output(self._snapshot, reason, now, abandoned)
         closed = self._document()
         closed["status"] = str(CLOSED_STATUS[reason])
         closed["close_reason"] = str(reason)
@@ -1010,8 +1431,17 @@ def _readable(error: Exception) -> str:
     return str(cause) if cause else str(error)
 
 
-def _final_output(snapshot: RunSnapshot, reason: CloseReason, now: Any) -> FinalOutput:
-    """A factual closing record. Narrative learnings arrive with the agent phase."""
+def _final_output(
+    snapshot: RunSnapshot,
+    reason: CloseReason,
+    now: Any,
+    abandoned: CustomerDraft | None = None,
+) -> FinalOutput:
+    """A factual closing record built only from what was actually recorded.
+
+    Every action listed here has a receipt. Nothing the agent merely proposed appears,
+    and a concern that was never settled is reported as still open.
+    """
     facts = snapshot.facts
     counters = snapshot.counters
     ended = {
@@ -1020,9 +1450,11 @@ def _final_output(snapshot: RunSnapshot, reason: CloseReason, now: Any) -> Final
         CloseReason.MAXIMUM_AGE_REACHED: "The order reached its original maximum age.",
     }[reason]
     unresolved = list(facts.open_issues)
+    actions = list(snapshot.committed_actions)
 
     summary = (
         f"{ended} Payment is {facts.payment} and shipment is {facts.shipment}. "
+        f"{len(actions)} simulated action(s) were recorded and "
         f"{len(unresolved)} concern(s) remain unresolved."
     )
     learnings = [
@@ -1032,31 +1464,48 @@ def _final_output(snapshot: RunSnapshot, reason: CloseReason, now: Any) -> Final
     ]
     if counters.duplicate_events:
         learnings.append(f"{counters.duplicate_events} duplicate delivery(ies) were ignored.")
+    if counters.committed_actions:
+        audiences = sorted({str(action_registry.audience_of(item.action)) for item in actions})
+        learnings.append(
+            f"{counters.committed_actions} action(s) were recorded, reaching: "
+            f"{', '.join(audiences)}."
+        )
+    else:
+        learnings.append("No business action was needed or authorised during this run.")
     if unresolved:
         learnings.append(
             "Unresolved at closure: " + ", ".join(issue.issue_id for issue in unresolved)
         )
 
-    feedback = [
-        "No simulated business actions were executed; action authorisation and receipts "
-        "arrive with the agent implementation."
-    ]
+    feedback = ["Every recorded action is a simulation; nothing was sent outside this system."]
     if unresolved:
         feedback.append("The unresolved concerns above need human follow-up.")
+    contacted = [issue for issue in unresolved if issue.contacts]
+    if contacted:
+        feedback.append(
+            "Already chased without resolution: "
+            + ", ".join(issue.issue_id for issue in contacted)
+            + ". A different audience or a person may be needed."
+        )
+    if abandoned is not None:
+        feedback.append(
+            f"A customer draft ({abandoned.draft_id}) was still {abandoned.status} when the "
+            "run closed, so the customer was never written to about it."
+        )
 
     return FinalOutput(
         close_reason=reason,
         closed_at=now,
         facts=facts,
         summary=summary[:2000],
-        important_actions=[],
+        important_actions=actions,
         unresolved_issues=unresolved,
         learnings=[item[:500] for item in learnings][:10],
         feedback=[item[:500] for item in feedback][:10],
         narrative_provenance="factual_fallback",
         narrative_limitation=(
-            "These are counts and facts from the record. Narrative learnings and "
-            "recommendations arrive with the agent implementation."
+            "These are counts and facts from the record. A model-written closing "
+            "narrative arrives with the reporting work."
         ),
         evidence_through_sequence=snapshot.last_sequence,
     )
