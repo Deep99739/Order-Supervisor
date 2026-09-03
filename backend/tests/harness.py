@@ -23,6 +23,7 @@ from temporalio.worker import Worker
 from app.activities.evidence import EvidenceActivities
 from app.activities.persistence import PersistenceActivities
 from app.contracts.decision import DecisionProposal, DecisionRequest, DecisionResult
+from app.contracts.report import ReportNarrative, ReportRequest, ReportResult
 from app.contracts.run import ActivityRecord, RunSnapshot
 from app.contracts.supervisor import SupervisorConfig
 from app.domain.digest import canonical_digest
@@ -80,6 +81,39 @@ class Decisions:
 
 
 @dataclass
+class Reports:
+    """A scripted closing-report boundary the test controls.
+
+    The default declines, which is the honest stand-in: no model wrote anything, so the
+    factual report is what gets saved. A test that wants the model-assisted path sets
+    `narrative`; one that wants a provider failure sets `fail_with`.
+    """
+
+    narrative: ReportNarrative | None = None
+    limitation: str | None = "Scripted mode: no model was asked to write this report."
+    fail_with: str | None = None
+    calls: int = 0
+    requests: list[ReportRequest] = field(default_factory=list)
+
+    @activity.defn(name="write_report")
+    async def write_report(self, request: dict[str, Any]) -> dict[str, Any]:
+        self.calls += 1
+        self.requests.append(ReportRequest.model_validate(request))
+        if self.fail_with:
+            raise ApplicationError(self.fail_with, type="ScriptedFailure", non_retryable=True)
+        if self.narrative is None:
+            return ReportResult(
+                provenance="factual_fallback", limitation=self.limitation, attempts=0
+            ).model_dump(mode="json")
+        return ReportResult(
+            narrative=self.narrative,
+            provenance="model_assisted",
+            model_label="scripted:test-model",
+            attempts=1,
+        ).model_dump(mode="json")
+
+
+@dataclass
 class Persistence:
     """The real write boundary, with a seam to hold one transaction open."""
 
@@ -107,6 +141,7 @@ class Supervised:
     client: Client
     pool: asyncpg.Pool
     decisions: Decisions
+    reports: Reports
     persistence: Persistence
     handle: WorkflowHandle
     run_id: UUID
@@ -217,6 +252,7 @@ async def supervised(
         initial_context=context or {"description": "Workflow fixture order"},
     )
     decisions = Decisions()
+    reports = Reports()
     persistence = Persistence(PersistenceActivities(pool))
     env = await WorkflowEnvironment.start_time_skipping()
     try:
@@ -230,6 +266,7 @@ async def supervised(
                 EvidenceActivities(pool).load_evidence,
                 EvidenceActivities(pool).load_report_evidence,
                 decisions.decide,
+                reports.write_report,
             ],
         ):
             handle = await env.client.start_workflow(
@@ -246,6 +283,7 @@ async def supervised(
                 client=env.client,
                 pool=pool,
                 decisions=decisions,
+                reports=reports,
                 persistence=persistence,
                 handle=handle,
                 run_id=reservation.snapshot.run_id,

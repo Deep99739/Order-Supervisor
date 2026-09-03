@@ -42,7 +42,13 @@ with workflow.unsafe.imports_passed_through():
         EvidenceRequest,
     )
     from app.contracts.persistence import ProposedEntry, TransitionReceipt, TransitionRequest
-    from app.contracts.report import ReportEvidence, ReportEvidenceRequest
+    from app.contracts.report import (
+        ReportEvidence,
+        ReportEvidenceRequest,
+        ReportNarrative,
+        ReportRequest,
+        ReportResult,
+    )
     from app.contracts.run import (
         ActiveInstruction,
         CommittedAction,
@@ -92,8 +98,11 @@ COMMIT_ACTIVITY = "commit_transition"
 DECIDE_ACTIVITY = "decide"
 EVIDENCE_ACTIVITY = "load_evidence"
 REPORT_EVIDENCE_ACTIVITY = "load_report_evidence"
+REPORT_ACTIVITY = "write_report"
 COMMIT_TIMEOUT = timedelta(seconds=20)
 DECIDE_TIMEOUT = timedelta(seconds=45)
+# Reporting gets one bounded call. A delivered order does not wait on prose.
+REPORT_TIMEOUT = timedelta(seconds=40)
 # Bounded so a failing provider cannot become an inference loop.
 MAX_DECISION_ATTEMPTS = 2
 # A burst of events can keep invalidating a review. After this many consecutive discards
@@ -1665,28 +1674,97 @@ class OrderSupervisor:
             refused=list(evidence.refused),
             abandoned=abandoned,
         )
+        final, report = await self._closing_narrative(final, reason, evidence)
+
         closed = self._document()
         closed["status"] = str(CLOSED_STATUS[reason])
         closed["close_reason"] = str(reason)
         closed["closed_at"] = now.isoformat()
         closed["next_wake_at"] = None
         closed["wake_reason"] = None
+        closed["counters"]["report_attempts"] += report.attempts
         closed["final_output"] = final.model_dump(mode="json")
-        await self._commit(
-            RunSnapshot.model_validate(closed),
-            [
+
+        closing = [
+            ProposedEntry(
+                entry_id=workflow.uuid4(),
+                kind="finalization",
+                disposition="recorded",
+                explanation="Final record saved; supervision has ended.",
+                details={"close_reason": str(reason), "provenance": final.narrative_provenance},
+            )
+        ]
+        if report.attempts:
+            adopted = report.narrative is not None
+            closing.insert(
+                0,
                 ProposedEntry(
                     entry_id=workflow.uuid4(),
                     kind="finalization",
-                    disposition="recorded",
-                    explanation="Final record saved; supervision has ended.",
-                    details={"close_reason": str(reason), "provenance": final.narrative_provenance},
-                )
-            ],
-        )
+                    disposition="recorded" if adopted else "rejected",
+                    explanation=(
+                        "The agent wrote the closing narrative over the recorded facts."
+                        if adopted
+                        else f"The factual report stands. {report.limitation}"
+                    )[:500],
+                    details={
+                        "stage": "narrative",
+                        "provenance": report.provenance,
+                        "model_label": report.model_label,
+                        "usage": report.usage.model_dump(mode="json") if report.usage else None,
+                        "limitation": report.limitation,
+                    },
+                ),
+            )
+        # The narrative, the report, the closure metadata, and the closed status are one
+        # transition: there is no moment where a run is closed without its record.
+        await self._commit(RunSnapshot.model_validate(closed), closing)
 
         await self._dispose_late_commands()
         return self._result(str(reason))
+
+    async def _closing_narrative(
+        self, factual: Any, reason: Any, evidence: ReportEvidence
+    ) -> tuple[Any, ReportResult]:
+        """Ask the agent to write the closing note, and keep the factual one unless it does.
+
+        The factual report already exists before this runs, which is what makes the call
+        safe to make at all: a provider that is unavailable, slow, or wrong costs a
+        paragraph and nothing else. Only the three text fields can move, and only after
+        the narrative has been checked against the record.
+        """
+        try:
+            raw = await workflow.execute_activity(
+                REPORT_ACTIVITY,
+                ReportRequest(
+                    run_id=self._snapshot.run_id,
+                    close_reason=reason,
+                    closed_at=factual.closed_at,
+                    evidence_through_sequence=factual.evidence_through_sequence,
+                    snapshot=self._snapshot,
+                    committed=list(evidence.committed),
+                    refused=list(evidence.refused),
+                    factual=ReportNarrative(
+                        summary=factual.summary,
+                        learnings=list(factual.learnings)[:6],
+                        feedback=list(factual.feedback)[:6],
+                    ),
+                ).model_dump(mode="json"),
+                start_to_close_timeout=REPORT_TIMEOUT,
+                # One call. Reporting is not an inference budget to spend down.
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+            result = ReportResult.model_validate(raw)
+        except ActivityError as error:
+            result = ReportResult(
+                provenance="factual_fallback",
+                limitation=f"The reporting call did not complete: {_readable(error)}"[:500],
+                attempts=1,
+            )
+
+        if result.narrative is None:
+            return factual, result
+        return reporting.adopt(factual, result.narrative, model_label=result.model_label), result
 
     async def _report_evidence(self) -> ReportEvidence:
         """Every receipt and refusal this run recorded, through the frozen cutoff.

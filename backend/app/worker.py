@@ -10,6 +10,7 @@ from app.activities.decision import DecisionActivities
 from app.activities.evidence import EvidenceActivities
 from app.activities.persistence import PersistenceActivities
 from app.activities.probe import ProbeActivities
+from app.activities.report import ReportActivities
 from app.config import load_settings
 from app.connections import process_connections
 from app.workflows.order import OrderSupervisor
@@ -39,6 +40,7 @@ async def run_worker() -> None:
                 EvidenceActivities(pool).load_evidence,
                 EvidenceActivities(pool).load_report_evidence,
                 DecisionActivities(settings).decide,
+                ReportActivities(settings).write_report,
             ],
             max_concurrent_activities=4,
             graceful_shutdown_timeout=timedelta(seconds=5),

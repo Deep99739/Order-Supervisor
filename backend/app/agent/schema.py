@@ -13,6 +13,7 @@ malformed output; it does not decide what is acceptable.
 
 from typing import Any
 
+from app.contracts.report import NARRATIVE_ITEMS
 from app.domain.actions import REGISTRY
 from app.domain.vocabulary import (
     ACTION_BATCH,
@@ -245,6 +246,50 @@ def proposal_schema(
         # Strict mode requires every property to be listed, so optionality is expressed
         # by the nullable union rather than by omission.
         "required": list(properties),
+        "additionalProperties": False,
+    }
+
+
+def narrative_schema() -> dict[str, Any]:
+    """The closing report's shape: three pieces of text and nothing else.
+
+    There is no action vocabulary here, no sleep, no memory, and no closure field. The
+    reporting call cannot propose an effect because the schema gives it nowhere to put
+    one — which is a stronger guarantee than asking it not to.
+    """
+    item = {"type": "string", "maxLength": 500}
+    return {
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string",
+                "maxLength": MESSAGE_CHARS,
+                "description": (
+                    "A short account of what actually happened to this order and why "
+                    "supervision ended. Describe only what the evidence shows."
+                ),
+            },
+            "learnings": {
+                "type": "array",
+                "maxItems": NARRATIVE_ITEMS,
+                "items": item,
+                "description": (
+                    "Patterns visible within this run — what needed chasing, what waited "
+                    "on whom. Not general advice, and no causal claims the events do not "
+                    "support."
+                ),
+            },
+            "feedback": {
+                "type": "array",
+                "maxItems": NARRATIVE_ITEMS,
+                "items": item,
+                "description": (
+                    "Recommendations for whoever picks this order up next. These are "
+                    "suggestions, never a description of work already done."
+                ),
+            },
+        },
+        "required": ["summary", "learnings", "feedback"],
         "additionalProperties": False,
     }
 

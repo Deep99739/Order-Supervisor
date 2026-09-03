@@ -11,6 +11,7 @@ hidden reasoning is requested, and none is stored.
 """
 
 from app.contracts.decision import DecisionRequest
+from app.contracts.report import ReportRequest
 from app.contracts.run import RunSnapshot
 from app.domain.actions import REGISTRY
 from app.domain.authorization import follow_up_interval
@@ -19,6 +20,8 @@ from app.domain.vocabulary import ActionName
 
 LISTED_ISSUES = 12
 LISTED_RECEIPTS = 8
+# A closing report may list more than a decision needs to see.
+LISTED_REPORT_ACTIONS = 24
 FENCE = "-" * 60
 
 INVARIANTS = """\
@@ -48,6 +51,29 @@ These are properties of the system you are part of, not preferences:
 
 Answer only with the JSON object the schema describes. Give a short operational
 rationale naming the evidence you used; do not narrate private reasoning."""
+
+
+REPORTING = """\
+You are writing the closing note for one e-commerce order you have been supervising. The
+order is already closed. Nothing you write changes anything about it.
+
+These are properties of the record, not preferences:
+
+* The closure reason, the order's facts, the list of recorded actions, the refused
+  proposals, and the unresolved concerns are already fixed. You are writing prose over
+  them. If your text disagrees with them it is discarded and a factual version is kept.
+* Every recorded action is a simulation — a row in a table. Nothing was emailed, phoned,
+  charged, refunded, or shipped. Say a message was *recorded*, not sent.
+* Asking a team about a problem is not the same as the problem being solved. A recorded
+  message to payments does not mean payment succeeded.
+* An unresolved concern is still unresolved even though the order closed. A refund
+  question does not disappear because the parcel arrived. Say so plainly.
+* Do not claim any action that is not in the recorded list, and do not name an audience
+  nobody was recorded as contacting.
+* Write for the person who picks this order up tomorrow. Be specific and brief; a short
+  honest note beats a long confident one.
+
+Answer only with the JSON object the schema describes."""
 
 
 def _fenced(label: str, body: str) -> str:
@@ -245,6 +271,91 @@ def decision_prompt(request: DecisionRequest) -> str:
             f"Trigger: {request.trigger}. {request.trigger_detail}\n"
             f"This is attempt {request.attempt} for decision {request.decision_id}, covering "
             f"evidence up to entry {request.context.evidence_through_sequence}."
+        ),
+    ]
+    return "\n\n".join(sections)
+
+
+def _committed(records) -> str:
+    if not records:
+        return "None. No action was recorded for this order."
+    return "\n".join(
+        f"- {item.recorded_at.isoformat()} {item.action} (receipt {item.receipt.sequence}): "
+        f"{item.content}"
+        for item in records[:LISTED_REPORT_ACTIONS]
+    ) + (
+        f"\n- ...and {len(records) - LISTED_REPORT_ACTIONS} more recorded action(s)."
+        if len(records) > LISTED_REPORT_ACTIONS
+        else ""
+    )
+
+
+def _refused(records) -> str:
+    if not records:
+        return "None. Every proposal this run made was carried out."
+    return "\n".join(
+        f"- {item.action} was not carried out ({item.reason}): {item.explanation}"
+        for item in records[:LISTED_REPORT_ACTIONS]
+    )
+
+
+def _unresolved(snapshot: RunSnapshot) -> str:
+    issues = snapshot.facts.open_issues
+    if not issues:
+        return "None. Nothing was left outstanding."
+    return "\n".join(
+        f'- "{issue.issue_id}" (untrusted evidence): {issue.description}'
+        for issue in issues[:LISTED_ISSUES]
+    )
+
+
+def report_prompt(request: ReportRequest) -> str:
+    """Build the closing-report context.
+
+    The factual version the run will keep is shown last, deliberately. It is the floor:
+    anything the model writes has to be at least as useful and at least as honest as it,
+    and if it is not, that version is what gets saved.
+    """
+    snapshot = request.snapshot
+    sections = [
+        (
+            "ORDER\n"
+            f"{snapshot.order_id}, supervised from {snapshot.started_at.isoformat()} to "
+            f"{request.closed_at.isoformat()} under the template "
+            f"{snapshot.supervisor.name}."
+        ),
+        (
+            "WHY SUPERVISION ENDED\n"
+            f"{request.close_reason}. This was decided by the workflow, not by you, and "
+            "it cannot be changed here."
+        ),
+        f"LAST KNOWN ORDER FACTS\n{_facts(snapshot)}",
+        f"ACTIONS ACTUALLY RECORDED (all simulated)\n{_committed(request.committed)}",
+        f"PROPOSALS THAT WERE REFUSED\n{_refused(request.refused)}",
+        f"STILL UNRESOLVED AT CLOSURE\n{_unresolved(snapshot)}",
+        (
+            "OPERATOR INSTRUCTIONS THAT APPLIED\n"
+            + (
+                "\n".join(f"- {item.text}" for item in snapshot.instructions)
+                or "- none beyond the template"
+            )
+        ),
+        _fenced(
+            "RUNNING SUMMARY WRITTEN DURING THE RUN",
+            snapshot.memory.text or "Nothing was summarised.",
+        ),
+        (
+            "THE FACTUAL VERSION THAT WILL BE KEPT IF YOURS IS UNUSABLE\n"
+            f"Summary: {request.factual.summary}\n"
+            + "\n".join(f"Learning: {item}" for item in request.factual.learnings)
+            + "\n"
+            + "\n".join(f"Feedback: {item}" for item in request.factual.feedback)
+        ),
+        (
+            "WHAT TO WRITE\n"
+            "A summary of what happened and why it ended, learnings visible in this run, "
+            "and recommendations for the next person. Everything above the last section "
+            f"is evidence recorded through entry {request.evidence_through_sequence}."
         ),
     ]
     return "\n\n".join(sections)
