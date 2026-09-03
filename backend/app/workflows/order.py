@@ -42,6 +42,7 @@ with workflow.unsafe.imports_passed_through():
         EvidenceRequest,
     )
     from app.contracts.persistence import ProposedEntry, TransitionReceipt, TransitionRequest
+    from app.contracts.report import ReportEvidence, ReportEvidenceRequest
     from app.contracts.run import (
         ActiveInstruction,
         CommittedAction,
@@ -90,6 +91,7 @@ with workflow.unsafe.imports_passed_through():
 COMMIT_ACTIVITY = "commit_transition"
 DECIDE_ACTIVITY = "decide"
 EVIDENCE_ACTIVITY = "load_evidence"
+REPORT_EVIDENCE_ACTIVITY = "load_report_evidence"
 COMMIT_TIMEOUT = timedelta(seconds=20)
 DECIDE_TIMEOUT = timedelta(seconds=45)
 # Bounded so a failing provider cannot become an inference loop.
@@ -1654,12 +1656,13 @@ class OrderSupervisor:
             )
         await self._commit(RunSnapshot.model_validate(finalizing), entries)
 
+        evidence = await self._report_evidence()
         final = reporting.factual(
             self._snapshot,
             reason,
             now=now,
-            committed=list(self._snapshot.committed_actions),
-            refused=[],
+            committed=list(evidence.committed),
+            refused=list(evidence.refused),
             abandoned=abandoned,
         )
         closed = self._document()
@@ -1684,6 +1687,30 @@ class OrderSupervisor:
 
         await self._dispose_late_commands()
         return self._result(str(reason))
+
+    async def _report_evidence(self) -> ReportEvidence:
+        """Every receipt and refusal this run recorded, through the frozen cutoff.
+
+        The snapshot carries a bounded working ledger, which is the right size for a
+        decision and the wrong size for a report. If the read cannot be completed the
+        ledger is used instead and the report is visibly the shorter one, rather than
+        the run waiting indefinitely for a list it already partly holds.
+        """
+        try:
+            raw = await workflow.execute_activity(
+                REPORT_EVIDENCE_ACTIVITY,
+                ReportEvidenceRequest(
+                    run_id=self._snapshot.run_id,
+                    through_sequence=self._snapshot.last_sequence,
+                ).model_dump(mode="json"),
+                start_to_close_timeout=COMMIT_TIMEOUT,
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            return ReportEvidence.model_validate(raw)
+        except ActivityError:
+            return ReportEvidence(
+                committed=list(self._snapshot.committed_actions), truncated=True
+            )
 
     async def _dispose_late_commands(self) -> None:
         """Give known queued commands a visible disposition before the workflow returns."""

@@ -40,6 +40,30 @@ class ReportNarrative(WireModel):
     )
 
 
+class ReportEvidenceRequest(WireModel):
+    """Every action receipt this run recorded, up to the report's frozen cutoff.
+
+    Unlike an evidence read for a decision, this one is a scan of a single kind for a
+    single run — the report has to list *all* receipts, not the bounded working ledger a
+    decision carries.
+    """
+
+    run_id: UUID
+    through_sequence: Count
+
+
+class ReportEvidence(WireModel):
+    committed: Annotated[list[CommittedAction], Field(max_length=128)] = Field(
+        default_factory=list
+    )
+    refused: Annotated[list[RefusedAction], Field(max_length=64)] = Field(default_factory=list)
+    # Rows the reader could not turn into a receipt. Reported rather than hidden, so a
+    # short list is visibly short rather than silently short.
+    unreadable: Count = 0
+    # True when the run has more receipts than a report will list.
+    truncated: bool = False
+
+
 class ReportRequest(WireModel):
     """One bounded reporting call against a frozen cutoff.
 

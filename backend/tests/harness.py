@@ -228,6 +228,7 @@ async def supervised(
             activities=[
                 persistence.commit_transition,
                 EvidenceActivities(pool).load_evidence,
+                EvidenceActivities(pool).load_report_evidence,
                 decisions.decide,
             ],
         ):

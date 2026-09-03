@@ -37,6 +37,7 @@ async def run_worker() -> None:
                 ProbeActivities(pool).probe_database,
                 PersistenceActivities(pool).commit_transition,
                 EvidenceActivities(pool).load_evidence,
+                EvidenceActivities(pool).load_report_evidence,
                 DecisionActivities(settings).decide,
             ],
             max_concurrent_activities=4,
