@@ -10,6 +10,8 @@ The rationale asked for here is operational: what was decided and on what eviden
 hidden reasoning is requested, and none is stored.
 """
 
+from datetime import datetime
+
 from app.contracts.decision import DecisionRequest
 from app.contracts.report import ReportRequest
 from app.contracts.run import RunSnapshot
@@ -276,11 +278,17 @@ def decision_prompt(request: DecisionRequest) -> str:
     return "\n\n".join(sections)
 
 
+def _stamp(moment: datetime) -> str:
+    """A time a person would write. The closing narrative is read by people, and a model
+    handed `2026-09-03T04:40:00.714739+00:00` quotes it back into the prose verbatim."""
+    return moment.strftime("%d %B %Y, %H:%M UTC")
+
+
 def _committed(records) -> str:
     if not records:
         return "None. No action was recorded for this order."
     return "\n".join(
-        f"- {item.recorded_at.isoformat()} {item.action} (receipt {item.receipt.sequence}): "
+        f"- {_stamp(item.recorded_at)} {item.action} (receipt {item.receipt.sequence}): "
         f"{item.content}"
         for item in records[:LISTED_REPORT_ACTIONS]
     ) + (
@@ -320,8 +328,8 @@ def report_prompt(request: ReportRequest) -> str:
     sections = [
         (
             "ORDER\n"
-            f"{snapshot.order_id}, supervised from {snapshot.started_at.isoformat()} to "
-            f"{request.closed_at.isoformat()} under the template "
+            f"{snapshot.order_id}, supervised from {_stamp(snapshot.started_at)} to "
+            f"{_stamp(request.closed_at)} under the template "
             f"{snapshot.supervisor.name}."
         ),
         (
