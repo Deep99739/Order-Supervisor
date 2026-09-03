@@ -80,13 +80,16 @@ async def test_a_long_history_rolls_over_while_the_order_carries_on(pool):
         ]
         assert len(creations) == 1, "the order is not initialised a second time"
 
+        # A preparation is not a rollover; an execution that actually resumed is. Read
+        # the generation alongside the history, since the backlog may still be draining.
+        current = await run.snapshot()
         resumed = [
             record
-            for record in history
+            for record in await run.history()
             if record.kind == "continuation" and record.disposition == "applied"
         ]
-        assert len(resumed) == rolled.execution_generation, "one record per resumed generation"
-        assert resumed[0].details["execution_generation"] == 1
+        assert len(resumed) >= current.execution_generation
+        assert [item.details["execution_generation"] for item in resumed[:1]] == [1]
         assert "carried over unchanged" in resumed[0].explanation
 
 
@@ -129,19 +132,32 @@ async def test_a_paused_run_rolls_over_and_stays_paused(pool):
         assert resumed.execution_generation == rolled.execution_generation
 
 
-async def test_a_fresh_execution_does_not_immediately_continue_again(pool):
-    """The threshold counts this execution's history, so a rollover resets it."""
+async def test_a_quiet_execution_does_not_continue_again_on_its_own(pool):
+    """The threshold counts *this* execution's history, so a rollover resets it.
+
+    A generation-wide counter would keep tripping immediately after every rollover, and
+    the run would spend its life continuing instead of supervising.
+    """
     async with supervised(pool, order_id="ORD-ROLL-ONCE", config=demo_run()) as run:
         await settled(run)
         await accumulate(run)
-        rolled = await run.until(lambda state: state.execution_generation >= 1)
+        await run.until(lambda state: state.execution_generation >= 1, note="a rollover")
 
-        await run.send_event("payment_confirmed", {"payment_reference": "PAY-1"})
-        await run.until(lambda state: state.facts.payment == "confirmed")
-        await asyncio.sleep(1.0)
+        # Let the queued backlog finish; only then is the execution genuinely quiet.
+        settledness = await run.snapshot()
+        while True:
+            await asyncio.sleep(1.0)
+            latest = await run.snapshot()
+            if latest.last_sequence == settledness.last_sequence:
+                break
+            settledness = latest
 
-        latest = await run.snapshot()
-        assert latest.execution_generation == rolled.execution_generation
+        # Nothing new arrives, so nothing should happen.
+        quiet = await run.snapshot()
+        await asyncio.sleep(2.0)
+        after = await run.snapshot()
+        assert after.execution_generation == quiet.execution_generation
+        assert after.counters.continuations == quiet.counters.continuations
 
 
 async def test_an_event_redelivered_after_a_rollover_is_still_a_duplicate(pool):

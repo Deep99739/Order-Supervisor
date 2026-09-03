@@ -141,6 +141,17 @@ async def test_unknown_supervisor_and_ungated_demo_timing_are_refused(api):
     assert await api.get("/api/runs", params={"order_id": "ORD-CREATE-10"}) is not None
 
 
+async def test_demo_timing_is_accepted_only_where_it_was_enabled(demo_api):
+    """The same request, the same code, one configuration flag apart."""
+    accepted = await demo_api.post(
+        "/api/runs", json=creation("ORD-CREATE-11", demo_timing_preset="short_review")
+    )
+    assert accepted.status_code == 201
+    view = await demo_api.get(f"/api/runs/{accepted.json()['run_id']}")
+    profile = view.json()["snapshot"]["supervisor"]["wake_profile"]
+    assert profile["mode"] == "demo", "it shortens timing and nothing else"
+
+
 @pytest.mark.integration
 async def test_start_is_idempotent_against_a_real_temporal_service(settings, pool):
     """One workflow integration: the reserved Workflow ID resolves to one execution."""

@@ -23,7 +23,7 @@ FOLLOW_UP_INTERVALS = 6
 # have accumulated past its cutoff, or once the deterministic narrative outgrows its cap.
 # A demo template refreshes sooner so the behaviour is observable in a short run.
 COMPACTION_RECORDS = 20
-DEMO_COMPACTION_RECORDS = 6
+DEMO_COMPACTION_RECORDS = 12
 # Older inputs the agent has not considered yet, retrieved by sequence from the log.
 DEFERRED_EVIDENCE_LIMIT = 12
 # The serialized ceiling for one decision's assembled context. Beyond this the run asks

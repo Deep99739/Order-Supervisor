@@ -70,8 +70,8 @@ def temporal() -> FakeTemporal:
     return FakeTemporal()
 
 
-@pytest.fixture
-async def api(settings: Settings, pool: asyncpg.Pool, temporal: FakeTemporal):
+@asynccontextmanager
+async def _client(settings: Settings, pool: asyncpg.Pool, temporal: FakeTemporal):
     @asynccontextmanager
     async def connections():
         yield pool, temporal
@@ -81,6 +81,23 @@ async def api(settings: Settings, pool: asyncpg.Pool, temporal: FakeTemporal):
         transport = httpx.ASGITransport(app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
+
+
+@pytest.fixture
+async def api(settings: Settings, pool: asyncpg.Pool, temporal: FakeTemporal):
+    """The API as configured, but with demo timing off regardless of the local `.env`.
+
+    A test whose result depends on a developer's environment file is a trap: it passes
+    until someone flips a switch for an unrelated reason.
+    """
+    async with _client(settings.model_copy(update={"demo_mode": False}), pool, temporal) as client:
+        yield client
+
+
+@pytest.fixture
+async def demo_api(settings: Settings, pool: asyncpg.Pool, temporal: FakeTemporal):
+    async with _client(settings.model_copy(update={"demo_mode": True}), pool, temporal) as client:
+        yield client
 
 
 @pytest.fixture(scope="session")

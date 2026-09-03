@@ -1418,6 +1418,7 @@ class OrderSupervisor:
             now=now,
             reason=f"{behind} record(s) had accumulated past the previous summary cutoff; "
             "rendered from the order's own record.",
+            through=self._snapshot.last_sequence + len(entries) + 1,
         )
         entries.append(self._memory_entry(fallback, decision_reference=reference))
         return self._with_summary(candidate, fallback)
@@ -1751,6 +1752,9 @@ class OrderSupervisor:
             self._snapshot,
             now=workflow.now(),
             reason=f"{behind} record(s) accumulated past the previous summary cutoff.",
+            # It covers the entry that records it, so a compaction is not itself
+            # unsummarised work pushing towards the next one.
+            through=self._snapshot.last_sequence + 1,
         )
         await self._commit(
             self._with_summary(self._snapshot, compaction), [self._memory_entry(compaction)]

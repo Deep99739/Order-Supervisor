@@ -128,18 +128,24 @@ def refresh_due(snapshot: RunSnapshot) -> bool:
     return records_since_summary(snapshot) >= compaction_threshold(snapshot)
 
 
-def deterministic(snapshot: RunSnapshot, *, now: datetime, reason: str) -> Compaction:
+def deterministic(
+    snapshot: RunSnapshot, *, now: datetime, reason: str, through: int | None = None
+) -> Compaction:
     """Re-render from confirmed state. Available always, including while held.
 
     Callers decide when this is due; it always produces a compaction, because even when
     the wording is unchanged the cutoff has moved and that is worth recording.
+
+    `through` is the sequence the writing transition will actually reach. Passing it
+    matters: without it a compaction's own entries count as unsummarised records and the
+    run slowly compacts itself into a rhythm nobody asked for.
     """
     text = render_summary(snapshot)
     return Compaction(
         summary=MemorySummary(
             text=text,
             summary_version=snapshot.memory.summary_version + 1,
-            summary_through_sequence=snapshot.last_sequence,
+            summary_through_sequence=max(through or 0, snapshot.last_sequence),
             recorded_at=now,
             provenance="deterministic",
         ),

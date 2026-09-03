@@ -118,6 +118,24 @@ def test_a_hint_outside_the_supported_shapes_is_not_a_hint(invalid):
 # --- validation -----------------------------------------------------------------------------
 
 
+def test_the_schema_does_not_constrain_an_issue_id_the_gate_already_enforces():
+    """A strict validator throws away the whole answer over one bad enum value, and an
+    unknown concern is a hint to refuse rather than a decision to lose."""
+    from app.agent.schema import proposal_schema
+
+    schema = proposal_schema(
+        ["create_internal_note"],
+        minimum=30,
+        maximum=3600,
+        cutoff=10,
+        offer_memory=False,
+        issue_ids=["refund"],
+    )
+    hint_fields = schema["properties"]["wake_hints"]["anyOf"][0]["items"]["properties"]
+    assert "enum" not in hint_fields["issue_id"]["anyOf"][0]
+    assert "refund" in hint_fields["issue_id"]["anyOf"][0]["description"]
+
+
 def test_a_usable_hint_is_adopted():
     snapshot = stalled()
     review = guidance.check(proposed(hint(), context=stamp(snapshot)), snapshot, stamp(snapshot),

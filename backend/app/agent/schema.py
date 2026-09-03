@@ -139,10 +139,16 @@ def _guidance(issue_ids: list[str], *, minimum: int, maximum: int) -> dict[str, 
                     "issue_id": _nullable(
                         {
                             "type": "string",
-                            "enum": issue_ids,
+                            # Deliberately not an enum. A strict validator rejects the
+                            # whole answer when a generated value falls outside one, and
+                            # an unknown concern is a hint to refuse, not a decision to
+                            # throw away. The gate names the valid ids; it also enforces
+                            # them.
                             "description": (
-                                "Required for watch_for_progress and shorten_review; omit "
-                                "for defer_routine."
+                                "One of the open concern ids listed in the context. "
+                                "Required for watch_for_progress and shorten_review; "
+                                f"omit for defer_routine. Currently open: "
+                                f"{', '.join(issue_ids)}."
                             ),
                         }
                     ),
