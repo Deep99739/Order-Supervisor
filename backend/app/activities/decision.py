@@ -24,10 +24,12 @@ from app.contracts.decision import (
     DecisionProposal,
     DecisionRequest,
     DecisionResult,
+    MemoryRefresh,
     ProviderUsage,
 )
 from app.contracts.run import RunSnapshot
 from app.domain import events as event_rules
+from app.domain import memory
 from app.domain.policy import effective_policy
 from app.domain.vocabulary import ActionName
 
@@ -77,6 +79,8 @@ class DecisionActivities:
             list(snapshot.supervisor.allowed_actions),
             minimum=profile.minimum_seconds,
             maximum=profile.default_seconds if urgent else profile.maximum_seconds,
+            cutoff=request.context.evidence_through_sequence,
+            offer_memory=memory.refresh_due(snapshot),
         )
 
         try:
@@ -139,7 +143,7 @@ def _clean(payload: dict[str, Any]) -> dict[str, Any]:
     """Drop the nulls a strict schema forces a model to emit, and anything from a later
     phase it was not asked for. Unexpected keys are removed rather than rejected — the
     proposal contract still decides whether what remains is usable."""
-    known = set(DecisionProposal.model_fields) - {"memory_refresh", "wake_guidance"}
+    known = set(DecisionProposal.model_fields)
     cleaned = {key: value for key, value in payload.items() if key in known and value is not None}
     actions = cleaned.get("actions")
     if isinstance(actions, list):
@@ -205,8 +209,17 @@ def _scripted(snapshot: RunSnapshot) -> DecisionProposal:
             f"unresolved. No action is useful yet; reviewing again in {seconds}s."
         )
 
+    refresh = None
+    if memory.refresh_due(snapshot):
+        # The stand-in refreshes deterministically, and declares the cutoff it can
+        # honestly claim: everything recorded so far.
+        refresh = MemoryRefresh(
+            text=memory.render_summary(snapshot), through_sequence=snapshot.last_sequence
+        )
+
     return DecisionProposal(
         rationale=rationale[:2000],
         actions=proposals,
         sleep_for_seconds=seconds,
+        memory_refresh=refresh,
     )

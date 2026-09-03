@@ -77,10 +77,12 @@
   "last_sequence": 6,
   "instructions": [],
   "memory": {
-    "text": "",
-    "summary_version": 0,
-    "summary_through_sequence": 0,
-    "recorded_at": null
+    "text": "Order EXAMPLE-1042 under Standard order care. Payment state is not yet known; shipment delayed. Open work \u2014 shipment-delay: Shipment delayed: hub backlog.",
+    "summary_version": 2,
+    "summary_through_sequence": 4,
+    "recorded_at": "2026-09-03T03:00:02Z",
+    "provenance": "model",
+    "source_decision_id": "e57362a1-1ea0-42a6-b6da-b365d59651c8/decision/1"
   },
   "recent_evidence": [],
   "unresolved_evidence": [],

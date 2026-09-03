@@ -60,21 +60,30 @@ def hostile_snapshot(**overrides):
 # --- the schema a provider will actually accept -------------------------------------------
 
 
+def schema_for(allowed, *, cutoff=40, offer_memory=False):
+    return proposal_schema(
+        allowed, minimum=30, maximum=3600, cutoff=cutoff, offer_memory=offer_memory
+    )
+
+
 def test_the_schema_offers_only_the_actions_this_supervisor_has():
-    schema = proposal_schema(["create_internal_note"], minimum=30, maximum=3600)
+    schema = schema_for(["create_internal_note"])
     offered = schema["properties"]["actions"]["items"]["properties"]["action"]["enum"]
     assert offered == ["create_internal_note"]
 
 
-def test_the_schema_never_asks_for_capabilities_that_are_not_implemented():
-    schema = proposal_schema([str(ActionName.MESSAGE_CUSTOMER)], minimum=30, maximum=3600)
-    assert "memory_refresh" not in schema["properties"]
-    assert "wake_guidance" not in schema["properties"]
+def test_a_memory_refresh_is_only_asked_for_when_one_is_due():
+    """Rewriting a summary nobody needed rewritten costs tokens and gains nothing."""
+    assert "memory_refresh" not in schema_for([str(ActionName.MESSAGE_CUSTOMER)])["properties"]
+    offered = schema_for([str(ActionName.MESSAGE_CUSTOMER)], offer_memory=True)["properties"]
+    assert "memory_refresh" in offered
+    covered = offered["memory_refresh"]["anyOf"][0]["properties"]["through_sequence"]
+    assert covered["maximum"] == 40, "a summary cannot claim evidence the decision never saw"
 
 
 def test_the_google_dialect_drops_what_that_endpoint_rejects():
     """`additionalProperties` and a union with null are both a 400 from Gemini."""
-    converted = to_openapi(proposal_schema(["create_internal_note"], minimum=30, maximum=3600))
+    converted = to_openapi(schema_for(["create_internal_note"], offer_memory=True))
     serialized = str(converted)
     assert "additionalProperties" not in serialized
     assert "anyOf" not in serialized
@@ -108,17 +117,17 @@ def test_the_nulls_a_strict_schema_forces_are_not_treated_as_values():
     assert proposal.completion_recommendation is None
 
 
-def test_output_from_a_later_phase_is_dropped_rather_than_adopted():
+def test_an_unrecognised_key_is_dropped_rather_than_failing_the_whole_answer():
     cleaned = _clean(
         {
             "rationale": "Wait.",
             "sleep_for_seconds": 300,
             "memory_refresh": {"text": "rewritten", "through_sequence": 9},
-            "wake_guidance": {"version": 1, "hints": []},
             "invented_field": "ignore me",
+            "completion_recommendation": None,
         }
     )
-    assert set(cleaned) == {"rationale", "sleep_for_seconds"}
+    assert set(cleaned) == {"rationale", "sleep_for_seconds", "memory_refresh"}
 
 
 def test_a_fenced_answer_is_read_and_a_non_object_is_refused():

@@ -199,6 +199,9 @@ class OrderSupervisor:
             if self._trigger is not None and self._can_decide():
                 await self._run_decision()
                 continue
+            # 8. Nothing is going to reason now, so keep the narrative current without a
+            #    model call. A held run relies on this.
+            await self._settle_memory()
             # 9. Make the waiting state visible before actually waiting.
             await self._settle_waiting_state()
             await self._wait_for_work()
@@ -217,10 +220,14 @@ class OrderSupervisor:
         document["facts"]["last_relevant_progress_at"] = self._snapshot.started_at.isoformat()
         document["counters"]["unique_events"] += 1
         document["recent_evidence"] = [evidence.model_dump(mode="json")]
-        candidate = self._with_memory(RunSnapshot.model_validate(document))
+        started = RunSnapshot.model_validate(document)
+        # One deterministic summary so the run is never described by an empty string.
+        opening = memory.deterministic(
+            started, now=now, reason="Opening summary rendered from the order's own record."
+        )
 
         await self._commit(
-            candidate,
+            self._with_summary(started, opening),
             [
                 ProposedEntry(
                     entry_id=entry_id,
@@ -245,7 +252,6 @@ class OrderSupervisor:
         )
         self._trigger = DecisionTrigger.START
         self._trigger_detail = "Supervision started; reviewing the order for the first time."
-        del now
 
     # ------------------------------------------------------------------------- draining
 
@@ -292,7 +298,7 @@ class OrderSupervisor:
             document["recent_evidence"] + [evidence.model_dump(mode="json")]
         )[-RECENT_RECORDS:]
         document["unresolved_evidence"] = _unresolved_evidence(outcome.facts)
-        candidate = self._with_memory(RunSnapshot.model_validate(document))
+        candidate = RunSnapshot.model_validate(document)
 
         envelope = command.model_dump(mode="json")
         command_digest = canonical_digest(envelope)
@@ -397,7 +403,7 @@ class OrderSupervisor:
         document["instructions"] = [item.model_dump(mode="json") for item in existing]
         document["context_version"] += 1
         try:
-            candidate = self._with_memory(RunSnapshot.model_validate(document))
+            candidate = RunSnapshot.model_validate(document)
         except ValidationError:
             # Standing instructions are never silently truncated to make room.
             await self._record_only(
@@ -709,7 +715,7 @@ class OrderSupervisor:
             now=now,
         )
         await self._commit(
-            self._with_memory(RunSnapshot.model_validate(document)),
+            RunSnapshot.model_validate(document),
             [
                 ProposedEntry(
                     entry_id=entry_id,
@@ -1037,6 +1043,10 @@ class OrderSupervisor:
                 )
             )
 
+        candidate = self._absorb_memory(
+            RunSnapshot.model_validate(document), proposal, reference, stamp, entries, now=now
+        )
+
         entries.append(
             ProposedEntry(
                 entry_id=workflow.uuid4(),
@@ -1050,7 +1060,58 @@ class OrderSupervisor:
                 },
             )
         )
-        await self._commit(self._with_memory(RunSnapshot.model_validate(document)), entries)
+        await self._commit(candidate, entries)
+
+    def _absorb_memory(
+        self,
+        candidate: RunSnapshot,
+        proposal: Any,
+        reference: str,
+        stamp: ContextStamp,
+        entries: list[ProposedEntry],
+        *,
+        now: Any,
+    ) -> RunSnapshot:
+        """Take the agent's summary if it is usable, and fall back rather than fail.
+
+        A refused proposal costs nothing: the previous valid summary is still there and
+        the deterministic renderer still works, which is exactly why an unusable summary
+        is rejected outright instead of being sliced to fit.
+        """
+        refresh = getattr(proposal, "memory_refresh", None)
+        if refresh is not None:
+            outcome = memory.from_proposal(
+                self._snapshot,
+                refresh,
+                input_cutoff=stamp.evidence_through_sequence,
+                decision_reference=reference,
+                now=now,
+            )
+            if isinstance(outcome, memory.Compaction):
+                entries.append(self._memory_entry(outcome, decision_reference=reference))
+                return self._with_summary(candidate, outcome)
+            entries.append(
+                ProposedEntry(
+                    entry_id=workflow.uuid4(),
+                    kind="memory",
+                    disposition="rejected",
+                    explanation=outcome.explanation[:500],
+                    decision_id=reference,
+                    details={"reason": outcome.reason},
+                )
+            )
+
+        if not memory.refresh_due(self._snapshot):
+            return candidate
+        behind = memory.records_since_summary(self._snapshot)
+        fallback = memory.deterministic(
+            candidate,
+            now=now,
+            reason=f"{behind} record(s) had accumulated past the previous summary cutoff; "
+            "rendered from the order's own record.",
+        )
+        entries.append(self._memory_entry(fallback, decision_reference=reference))
+        return self._with_summary(candidate, fallback)
 
     def _absorb_action(
         self,
@@ -1332,19 +1393,52 @@ class OrderSupervisor:
     def _document(self) -> dict[str, Any]:
         return self._snapshot.model_dump(mode="json")
 
-    def _with_memory(self, candidate: RunSnapshot) -> RunSnapshot:
-        text = memory.render_summary(candidate)
-        if text == candidate.memory.text:
-            return candidate
+    # ---------------------------------------------------------------------------- memory
+
+    def _with_summary(self, candidate: RunSnapshot, compaction: Any) -> RunSnapshot:
         document = candidate.model_dump(mode="json")
-        document["memory"] = {
-            "text": text,
-            "summary_version": candidate.memory.summary_version + 1,
-            "summary_through_sequence": candidate.last_sequence,
-            "recorded_at": workflow.now().isoformat(),
-        }
+        document["memory"] = compaction.summary.model_dump(mode="json")
         document["counters"]["compactions"] += 1
         return RunSnapshot.model_validate(document)
+
+    def _memory_entry(self, compaction: Any, *, decision_reference: str | None = None):
+        """What a compaction preserved, in numbers an operator can check."""
+        return ProposedEntry(
+            entry_id=workflow.uuid4(),
+            kind="memory",
+            disposition="recorded",
+            explanation=compaction.reason[:500],
+            decision_id=decision_reference,
+            details={
+                "summary_version": compaction.summary.summary_version,
+                "provenance": compaction.summary.provenance,
+                "covered_from": compaction.covered_from,
+                "covered_through": compaction.summary.summary_through_sequence,
+                "before_chars": compaction.before_chars,
+                "after_chars": compaction.after_chars,
+                # Compaction shortens the narrative and nothing else. These stay whole.
+                "instructions_retained": len(self._snapshot.instructions),
+                "open_issues_retained": len(self._snapshot.facts.open_issues),
+            },
+        )
+
+    async def _settle_memory(self) -> None:
+        """Keep the narrative current without spending a model call to do it.
+
+        This is the path a held run uses. Nothing here reads or writes anything the
+        agent owns; it re-renders from confirmed state and moves the cutoff.
+        """
+        if not memory.refresh_due(self._snapshot):
+            return
+        behind = memory.records_since_summary(self._snapshot)
+        compaction = memory.deterministic(
+            self._snapshot,
+            now=workflow.now(),
+            reason=f"{behind} record(s) accumulated past the previous summary cutoff.",
+        )
+        await self._commit(
+            self._with_summary(self._snapshot, compaction), [self._memory_entry(compaction)]
+        )
 
     async def _record_only(
         self,

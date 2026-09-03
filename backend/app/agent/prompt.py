@@ -207,7 +207,12 @@ def decision_prompt(request: DecisionRequest) -> str:
         f"OPEN CONCERNS\n{_issues(snapshot)}",
         f"ALREADY RECORDED ACTIONS\n{_receipts(snapshot)}",
         _fenced(
-            "RUNNING SUMMARY OF THIS ORDER",
+            (
+                "RUNNING SUMMARY OF THIS ORDER — covers entries up to "
+                f"{snapshot.memory.summary_through_sequence} only, written by "
+                f"{'you' if snapshot.memory.provenance == 'model' else 'the system'}; "
+                f"entries after that are outside it"
+            ),
             snapshot.memory.text or "Nothing has been summarised yet.",
         ),
         _fenced(

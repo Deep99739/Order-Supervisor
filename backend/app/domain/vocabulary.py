@@ -19,6 +19,22 @@ ACTION_LEDGER = 32
 # A second contact to the same audience about unchanged work becomes eligible after this
 # many default review intervals, so the pause scales with the template's own timing.
 FOLLOW_UP_INTERVALS = 6
+# Compaction is triggered, not continuous: a summary is refreshed once this many records
+# have accumulated past its cutoff, or once the deterministic narrative outgrows its cap.
+# A demo template refreshes sooner so the behaviour is observable in a short run.
+COMPACTION_RECORDS = 20
+DEMO_COMPACTION_RECORDS = 6
+# Older inputs the agent has not considered yet, retrieved by sequence from the log.
+DEFERRED_EVIDENCE_LIMIT = 12
+# The serialized ceiling for one decision's assembled context. Beyond this the run asks
+# an operator to consolidate rather than silently dropping an instruction or a question.
+CONTEXT_BUDGET_BYTES = 48 * 1024
+# Active wake hints. Three is enough to be useful and small enough to audit.
+GUIDANCE_HINTS = 3
+# Temporal history events before the execution rolls over. Counted per generation so a
+# fresh execution cannot immediately continue again.
+CONTINUATION_EVENTS = 2000
+DEMO_CONTINUATION_EVENTS = 120
 STANDARD_WAKE = (30, 300, 3600)
 DEMO_WAKE = (10, 20, 60)
 DEMO_MAXIMUM_AGE_SECONDS = 1800

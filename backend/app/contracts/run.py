@@ -94,10 +94,20 @@ class ActiveInstruction(WireModel):
 
 
 class MemorySummary(WireModel):
+    """The compact narrative and, just as importantly, how far it actually reaches.
+
+    `summary_through_sequence` is the evidence cutoff: everything recorded after it is
+    outside what this text covers, which is what stops a summary from being read as a
+    complete account of the run.
+    """
+
     text: Annotated[str, StringConstraints(max_length=SUMMARY_CHARS)] = ""
     summary_version: Count = 0
     summary_through_sequence: Count = 0
     recorded_at: UTCDateTime | None = None
+    # Defaulted so a run recorded before provenance was tracked still loads.
+    provenance: Literal["deterministic", "model"] = "deterministic"
+    source_decision_id: Reference | None = None
 
 
 class ContextStamp(WireModel):

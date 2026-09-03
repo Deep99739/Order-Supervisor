@@ -185,11 +185,15 @@ export interface ActiveInstruction {
   policy_changes: PolicyChanges | null;
 }
 
+// `summary_through_sequence` is the evidence cutoff: entries after it are outside what
+// this text covers, which is what stops it reading as a complete account of the run.
 export interface MemorySummary {
   text: string;
   summary_version: number;
   summary_through_sequence: number;
   recorded_at: UTCDateTime | null;
+  provenance: "deterministic" | "model";
+  source_decision_id: string | null;
 }
 
 export interface ContextStamp {
