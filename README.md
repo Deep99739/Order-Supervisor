@@ -59,5 +59,11 @@ Open [http://localhost:3000](http://localhost:3000). FastAPI documentation is av
 at [http://127.0.0.1:8010/docs](http://127.0.0.1:8010/docs), and the Temporal UI is at
 [http://localhost:8233](http://localhost:8233).
 
+## Architecture
+
+See [ARCHITECTURE_NOTE.md](ARCHITECTURE_NOTE.md) for the design: components, the
+supervision lifecycle, what owns which decision, how memory and Temporal history are
+bounded separately, and the trade-offs.
+
 Press Ctrl-C to stop the application processes. Run `make stop` when you also want to
 stop PostgreSQL and Temporal.
