@@ -29,12 +29,23 @@ async def test_health_is_independent_and_readiness_is_honest():
             assert "test:test" not in response.text
             schema = (await client.get("/openapi.json")).json()
             paths = set(schema["paths"])
-            assert {"/healthz", "/readyz", "/api/runs", "/api/runs/{run_id}"} <= paths
-            # Later work must not be advertised before it exists.
-            assert "/api/runs/{run_id}/analytics" not in paths
-            assert {"RunSnapshot", "EventCommand", "DecisionProposal"} <= schema["components"][
-                "schemas"
-            ].keys()
+            # Every advertised route is one that exists. Analytics moved from "not yet"
+            # to implemented when it was actually built, not when it was planned.
+            assert {
+                "/healthz",
+                "/readyz",
+                "/api/runs",
+                "/api/runs/{run_id}",
+                "/api/runs/{run_id}/activity",
+                "/api/runs/{run_id}/analytics",
+            } <= paths
+            assert {
+                "RunSnapshot",
+                "EventCommand",
+                "DecisionProposal",
+                "FinalOutput",
+                "RunAnalytics",
+            } <= schema["components"]["schemas"].keys()
             cors = await client.get("/healthz", headers={"Origin": settings.allowed_ui_origin})
             assert cors.headers["access-control-allow-origin"] == settings.allowed_ui_origin
             denied = await client.get("/healthz", headers={"Origin": "https://unrelated.example"})

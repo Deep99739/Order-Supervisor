@@ -9,10 +9,12 @@ from fastapi import APIRouter, Query, Response
 from app.api.dependencies import Config, Pool, Temporal, load_run
 from app.api.errors import ApiFailure
 from app.api.transport import start_supervisor
+from app.contracts.analytics import RunAnalytics
 from app.contracts.api import ActivityPage, RunCreated, RunPage, RunView
 from app.contracts.commands import ApiError, CreateRunRequest
 from app.domain.digest import canonical_digest
 from app.domain.presets import demo_timing
+from app.storage import analytics as analytics_store
 from app.storage import runs as run_store
 from app.storage import supervisors as supervisor_store
 
@@ -128,6 +130,17 @@ async def list_runs(
 async def read_run(run_id: UUID, pool: Pool) -> RunView:
     snapshot = await load_run(pool, run_id)
     return RunView(snapshot=snapshot, observed_at=datetime.now(UTC))
+
+
+@router.get("/runs/{run_id}/analytics", response_model=RunAnalytics, responses=ERRORS)
+async def read_analytics(run_id: UUID, pool: Pool) -> RunAnalytics:
+    """Counts derived from this run's canonical records, bounded by its recorded cutoff.
+
+    Aggregated on request rather than cached: the activity log is the authority, and the
+    response reports `through_sequence` so a number is never read beside a newer fact.
+    """
+    snapshot = await load_run(pool, run_id)
+    return await analytics_store.read_analytics(pool, snapshot)
 
 
 @router.get("/runs/{run_id}/activity", response_model=ActivityPage, responses=ERRORS)

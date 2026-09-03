@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from pydantic.json_schema import models_json_schema
 
+from app.contracts.analytics import RunAnalytics
 from app.contracts.commands import (
     KNOWN_PAYLOADS,
     ApiError,
@@ -30,6 +31,7 @@ PUBLIC_MODELS = (
     ActivityRecord,
     DecisionProposal,
     FinalOutput,
+    RunAnalytics,
     ApiError,
     *KNOWN_PAYLOADS.values(),
 )

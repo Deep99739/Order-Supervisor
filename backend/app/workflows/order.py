@@ -429,7 +429,11 @@ class OrderSupervisor:
                         "event_type": str(KnownEvent.ORDER_CREATED),
                         "initial_context": self._snapshot.initial_context,
                     },
-                )
+                ),
+                # The opening summary is a memory version like any other, so it gets a
+                # record like any other. Without this the counter would be one ahead of
+                # anything a reader could find in the timeline.
+                self._memory_entry(opening),
             ],
         )
         self._trigger = DecisionTrigger.START
