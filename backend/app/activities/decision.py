@@ -1,11 +1,13 @@
 """The decision boundary.
 
 The workflow owns timing, staleness, and authority; this activity owns only "what would
-be useful here". Today it answers from a small deterministic script so the orchestration
-around it can be exercised honestly. **A scripted answer is not an AI demonstration**,
-and it is labelled as such in every record it produces.
+be useful here". It builds the context, asks one model once, and validates the answer.
+It never writes to the database and never decides whether a proposal is permitted.
 
-The real provider adapter replaces `_scripted` behind this same contract.
+Failures are kept distinguishable, because they call for different things from an
+operator: no configuration, a provider that would not answer, and a provider that
+answered with something unusable are three different problems. In every case the run's
+recorded facts, memory, and instructions survive untouched.
 """
 
 from typing import Any
@@ -13,29 +15,41 @@ from typing import Any
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from app.agent.prompt import INVARIANTS, decision_prompt
+from app.agent.providers import ProviderError, build_provider, parse_json
+from app.agent.schema import proposal_schema, to_openapi
 from app.config import Settings
-from app.contracts.decision import ActionProposal, DecisionProposal, DecisionRequest, DecisionResult
+from app.contracts.decision import (
+    ActionProposal,
+    DecisionProposal,
+    DecisionRequest,
+    DecisionResult,
+    ProviderUsage,
+)
 from app.contracts.run import RunSnapshot
 from app.domain import events as event_rules
 from app.domain.policy import effective_policy
 from app.domain.vocabulary import ActionName
 
 # Which open concern each team is the right audience for.
-ISSUE_ACTIONS: tuple[tuple[str, ActionName, str], ...] = (
+ISSUE_ACTIONS: tuple[tuple[str, ActionName, str, str], ...] = (
     (
         event_rules.PAYMENT_ISSUE,
         ActionName.MESSAGE_PAYMENTS_TEAM,
-        "Ask the payments team to confirm what happened to this payment.",
+        "Payment problem on this order",
+        "Please confirm what happened to this payment and whether it can be retried.",
     ),
     (
         event_rules.SHIPMENT_DELAY_ISSUE,
         ActionName.MESSAGE_LOGISTICS_TEAM,
-        "Ask logistics for a revised delivery estimate for this shipment.",
+        "Delayed shipment on this order",
+        "Please confirm a revised delivery estimate for this shipment.",
     ),
     (
         event_rules.STALLED_ISSUE,
         ActionName.MESSAGE_FULFILLMENT_TEAM,
-        "Ask fulfillment why this order has not progressed.",
+        "No progress on this order",
+        "This order has not progressed. Please confirm what the next step is.",
     ),
 )
 
@@ -47,18 +61,95 @@ class DecisionActivities:
     @activity.defn(name="decide")
     async def decide(self, request: dict[str, Any]) -> dict[str, Any]:
         parsed = DecisionRequest.model_validate(request)
-        if self.settings.agent_mode != "scripted":
-            # No provider adapter exists yet. Saying so is better than quietly pretending,
-            # and the workflow turns this into a visible recovery state.
-            raise ApplicationError(
-                "The model adapter is not implemented yet. Set AGENT_MODE=scripted to "
-                "exercise the supervisor lifecycle with deterministic decisions.",
-                type="ModelAdapterMissing",
-                non_retryable=True,
+        if self.settings.agent_mode == "scripted":
+            # A deterministic stand-in, labelled as one wherever it is recorded.
+            return DecisionResult(
+                proposal=_scripted(parsed.snapshot), provenance="scripted"
+            ).model_dump(mode="json")
+        return (await self._model_decision(parsed)).model_dump(mode="json")
+
+    async def _model_decision(self, request: DecisionRequest) -> DecisionResult:
+        settings = self.settings
+        snapshot = request.snapshot
+        profile = snapshot.supervisor.wake_profile
+        urgent = effective_policy(snapshot).prioritize_speed
+        schema = proposal_schema(
+            list(snapshot.supervisor.allowed_actions),
+            minimum=profile.minimum_seconds,
+            maximum=profile.default_seconds if urgent else profile.maximum_seconds,
+        )
+
+        try:
+            provider = build_provider(
+                settings.model_provider, settings.model_name, settings.api_keys
             )
+        except ProviderError as error:
+            raise _failure("ModelNotConfigured", str(error), retryable=False) from None
+
+        if provider.name == "google":
+            schema = to_openapi(schema)
+
+        try:
+            reply = await provider.complete(
+                system=INVARIANTS, user=decision_prompt(request), schema=schema
+            )
+        except ProviderError as error:
+            raise _failure(
+                "ProviderUnavailable" if error.retryable else "ProviderRejected",
+                str(error),
+                retryable=False,
+            ) from None
+
+        try:
+            proposal = DecisionProposal.model_validate(_clean(parse_json(reply.text)))
+        except ProviderError as error:
+            raise _failure("MalformedProposal", str(error), retryable=False) from None
+        except Exception as error:  # noqa: BLE001 - reported to the operator as-is
+            raise _failure(
+                "MalformedProposal",
+                f"The answer did not satisfy the proposal contract: {error}",
+                retryable=False,
+            ) from None
+
+        activity.logger.info(
+            "decision %s answered by %s (attempt %s, transport %s)",
+            request.decision_id,
+            provider.label,
+            request.attempt,
+            reply.transport_attempts,
+        )
         return DecisionResult(
-            proposal=_scripted(parsed.snapshot), provenance="scripted"
-        ).model_dump(mode="json")
+            proposal=proposal,
+            provenance="model",
+            model_label=provider.label,
+            usage=ProviderUsage(
+                input_tokens=reply.usage.get("input_tokens"),
+                output_tokens=reply.usage.get("output_tokens"),
+                transport_attempts=reply.transport_attempts,
+            ),
+        )
+
+
+def _failure(kind: str, message: str, *, retryable: bool) -> ApplicationError:
+    # The episode owns the retry budget, so nothing here asks the SDK for another go.
+    return ApplicationError(message[:1000], type=kind, non_retryable=not retryable)
+
+
+def _clean(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop the nulls a strict schema forces a model to emit, and anything from a later
+    phase it was not asked for. Unexpected keys are removed rather than rejected — the
+    proposal contract still decides whether what remains is usable."""
+    known = set(DecisionProposal.model_fields) - {"memory_refresh", "wake_guidance"}
+    cleaned = {key: value for key, value in payload.items() if key in known and value is not None}
+    actions = cleaned.get("actions")
+    if isinstance(actions, list):
+        fields = set(ActionProposal.model_fields)
+        cleaned["actions"] = [
+            {key: value for key, value in item.items() if key in fields and value is not None}
+            for item in actions
+            if isinstance(item, dict)
+        ]
+    return cleaned
 
 
 def _scripted(snapshot: RunSnapshot) -> DecisionProposal:
@@ -68,13 +159,14 @@ def _scripted(snapshot: RunSnapshot) -> DecisionProposal:
     policy = effective_policy(snapshot)
     proposals: list[ActionProposal] = []
 
-    for issue_id, action, content in ISSUE_ACTIONS:
+    for issue_id, action, subject, content in ISSUE_ACTIONS:
         if len(proposals) >= 5:
             break
         if event_rules.has_issue(facts, issue_id) and action in allowed:
             proposals.append(
                 ActionProposal(
                     action=action,
+                    subject=subject,
                     content=content,
                     issue_id=issue_id,
                     rationale=f"{issue_id} is open and needs an owner.",
@@ -87,6 +179,7 @@ def _scripted(snapshot: RunSnapshot) -> DecisionProposal:
         proposals.append(
             ActionProposal(
                 action=ActionName.CREATE_INTERNAL_NOTE,
+                category="escalation",
                 content=f"These concerns need a person to look at them: {names}.",
                 issue_id=flagged[0].issue_id,
                 rationale="Flagged evidence cannot be resolved without human judgement.",
@@ -94,10 +187,8 @@ def _scripted(snapshot: RunSnapshot) -> DecisionProposal:
         )
 
     profile = snapshot.supervisor.wake_profile
-    if facts.open_issues:
+    if facts.open_issues or policy.prioritize_speed:
         # Look again sooner while something is unresolved.
-        seconds = max(profile.minimum_seconds, profile.default_seconds // 2)
-    elif policy.prioritize_speed:
         seconds = max(profile.minimum_seconds, profile.default_seconds // 2)
     else:
         seconds = profile.default_seconds

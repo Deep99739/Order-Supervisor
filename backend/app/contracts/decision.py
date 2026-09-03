@@ -93,9 +93,20 @@ class DecisionProposal(WireModel):
         return self
 
 
+class ProviderUsage(WireModel):
+    """Only what the provider actually reported. An unreported number stays absent
+    rather than being estimated, and transport attempts are counted separately from the
+    episode's reasoning attempts."""
+
+    input_tokens: Count | None = None
+    output_tokens: Count | None = None
+    transport_attempts: PositiveInt = 1
+
+
 class DecisionResult(WireModel):
     """The proposal plus where it came from. A scripted result is never a model result."""
 
     proposal: DecisionProposal
     provenance: Literal["scripted", "model"]
     model_label: Reference | None = None
+    usage: ProviderUsage | None = None
