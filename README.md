@@ -67,3 +67,15 @@ bounded separately, and the trade-offs.
 
 Press Ctrl-C to stop the application processes. Run `make stop` when you also want to
 stop PostgreSQL and Temporal.
+
+## Tests
+
+```sh
+cd backend && uv run pytest
+cd frontend && npm run check:contracts && npm run check:display && npm run lint && npm run typecheck
+```
+
+Tests that need PostgreSQL or Temporal skip with a message rather than fail, so run
+`make setup` first if you want the whole suite to execute. No test calls a model
+provider; the workflow tests substitute the decision activity, so a green suite is not
+evidence that a provider works.
